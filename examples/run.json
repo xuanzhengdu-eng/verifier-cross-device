@@ -1,0 +1,8 @@
+{
+  "reference": {"backend": "nvidia", "agent": "http://127.0.0.1:9101"},
+  "targets": {
+    "amd":    {"agent": "http://127.0.0.1:9102", "solution": "solutions/addmm/amd.py"},
+    "ascend": {"agent": "http://127.0.0.1:9103", "solution": "solutions/addmm/ascend.py"}
+  },
+  "storage": "_vcd_store"
+}
