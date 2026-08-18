@@ -19,25 +19,19 @@ def _register(key: str, role: str, func):
 
 
 def _timed(func, role: str):
-    """执行并记录 latency（ms）。
+    """Execute once for output, then collect vendor-neutral synchronized timing."""
+    from .runtime import benchmark
 
-    计时统一用 `triton.testing.do_bench`（warmup + 多次迭代 + 分位），和 KGB 一致；
-    各后端（NV/AMD/Ascend）的同步/对齐由 do_bench 内部处理，这里不分厂商。
-    do_bench 只返回耗时、不返回算子输出，所以先单独取一次 output 供 compare。
-    """
-    import triton.testing as tt
-
-    out = func()  # 实际输出（给 compare）
-    res = tt.do_bench(func, quantiles=[0.5, 0.2, 0.8])  # 内部 warmup+多次+分位
-    p50 = res[0] if isinstance(res, (list, tuple)) else res
-    context.record_latency(role, float(p50))  # type: ignore[arg-type]
+    out = func()
+    result = benchmark(func, _local_device(), warmup=3, iterations=10)
+    context.record_latency(role, result.p50_ms)
     return out
 
 
 def _local_device() -> str:
-    import torch
+    from .runtime import detect_device
 
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    return detect_device("auto")
 
 
 def _to_local_device(kwargs: dict) -> dict:
@@ -139,4 +133,3 @@ def run_compare_body(func, ref_out, res_out, args, kwargs) -> dict:
         rec["passed"] = False
         rec["error"] = str(e)
     return rec
-

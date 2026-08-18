@@ -1,127 +1,283 @@
-"""agent —— 假装某个 backend 的执行 server（loopback PoC）。
+"""Cross-device execution agent.
 
-启动时 import 指定 test 模块（填充 vcd.REGISTRY 的角色函数 + KGB baseline 命名空间）。
-收 /execute：拉输入包 → 搬本机设备 → (res 装 solution) → 跑角色函数 → do_bench 计时 →
-输出落 storage → 回 {output_key, latency_ms, device}。
-
-loopback：所有 agent 其实跑在同一台机器（同一 CPU/GPU），只用 --backend 打标签模拟不同后端。
+The agent receives only artifact references and small control messages. Inputs and
+outputs travel through the configured Storage backend. Submitted solution source
+is intentionally disabled unless the process is started with
+``--allow-solution-code``; run the agent only inside an isolated work container.
 """
+from __future__ import annotations
+
 import argparse
+import hashlib
 import importlib
+import json
+import os
+import re
+import threading
 import types
+from typing import Literal
 
 import torch
-import triton.testing as tt
 import uvicorn
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
 
-import kernelgenbench
 import vcd
-from storage import (
-    LocalStorage,
-    deserialize_bundle,
-    serialize_output,
-)
+from storage import Storage, deserialize_bundle, make_storage, serialize_output
+from vcd.runtime import benchmark, detect_device, device_info, move_to_device
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-/]{0,199}$")
 
 
 class ExecRequest(BaseModel):
-    job_id: str
-    problem_key: str
-    op: str
-    role: str  # "ref" | "res"
-    input_key: str
-    solution_code: str | None = None  # res 才带；.py 源码，定义 def <op>(...)
+    job_id: str = Field(min_length=1, max_length=128)
+    problem_key: str = Field(min_length=1, max_length=200)
+    op: str = Field(min_length=1, max_length=200)
+    role: Literal["ref", "res"]
+    input_format: Literal["vcd", "op_verify"] = "vcd"
+    input_key: str = Field(min_length=1, max_length=1024)
+    solution_code: str | None = None
+    solution_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
-def build_app(backend: str, device: str, storage: LocalStorage) -> FastAPI:
-    app = FastAPI(title=f"vcd-agent[{backend}]")
+def _safe_component(value: str, name: str) -> str:
+    if not _SAFE_NAME.fullmatch(value) or ".." in value.split("/"):
+        raise ValueError(f"invalid {name}: {value!r}")
+    return value
+
+
+def _verify_bearer(expected: str | None, authorization: str | None) -> None:
+    if not expected:
+        return
+    if authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="invalid bearer token")
+
+
+def build_app(
+    backend: str,
+    device: str,
+    storage: Storage,
+    *,
+    auth_token: str | None = None,
+    allow_solution_code: bool = True,
+    warmup: int = 3,
+    iterations: int = 10,
+    max_solution_bytes: int = 1_000_000,
+) -> FastAPI:
+    runtime_device = detect_device(device)
+    execute_lock = threading.Lock()
+    app = FastAPI(title=f"vcd-agent[{backend}]", version="0.2.0")
 
     @app.get("/health")
-    def health():
-        return {"status": "ok", "backend": backend, "device": device}
+    def health(authorization: str | None = Header(default=None)):
+        _verify_bearer(auth_token, authorization)
+        return {
+            "status": "ok",
+            "service": "vcd-agent",
+            "version": "0.2.0",
+            "device": device_info(backend, runtime_device),
+            "registered_problems": sorted(vcd.REGISTRY),
+        }
 
     @app.post("/execute")
-    def execute(req: ExecRequest):
-        # 1) 拉输入包 + 搬本机设备
-        bundle = deserialize_bundle(storage.get(req.input_key))
-        args = {
-            k: (v.to(device) if torch.is_tensor(v) else v) for k, v in bundle.items()
-        }
-
-        # 2) res：把收到的 solution .py 装进 kernelgenbench.solution.<op>
-        if req.role == "res":
-            if not req.solution_code:
-                return {"status": "error", "error": "res 缺 solution_code"}
-            fn = _install_solution(req.op, req.solution_code)
-            if fn is None:
-                return {"status": "unsupported", "backend": backend, "op": req.op}
-
-        # 3) 取角色函数（原始未装饰函数，agent 本地执行）
-        roles = vcd.REGISTRY.get(req.problem_key, {})
-        role_fn = roles.get(f"{req.role}_compute")
-        if role_fn is None:
-            return {"status": "error", "error": f"no {req.role}_compute for {req.problem_key}"}
-
-        # 4) 执行一次拿输出 + do_bench 计时
+    def execute(req: ExecRequest, authorization: str | None = Header(default=None)):
+        _verify_bearer(auth_token, authorization)
         try:
-            out = role_fn(**args)
-            bench = tt.do_bench(lambda: role_fn(**args), quantiles=[0.5, 0.2, 0.8])
-            p50 = bench[0] if isinstance(bench, (list, tuple)) else bench
-            p50 = float(p50)  # type: ignore[arg-type]
-        except Exception as e:  # 该后端跑不了这个算子等
-            return {"status": "unsupported", "backend": backend, "op": req.op, "error": repr(e)}
+            job_id = _safe_component(req.job_id, "job_id")
+            problem_key = _safe_component(req.problem_key, "problem_key")
+            op = _safe_component(req.op, "op")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        # 5) 输出落 storage
-        out_key = f"{req.input_key}.out.{backend}"
-        storage.put(out_key, serialize_output(out))
+        with execute_lock:
+            try:
+                input_data = storage.get(req.input_key)
+                if req.input_format == "op_verify":
+                    from op_verify.serialization import unpack_inputs
 
-        return {
-            "status": "success",
-            "backend": backend,
-            "output_key": out_key,
-            "latency_ms": p50,
-            "device": _device_info(backend, device),
-        }
+                    tensor_args, scalar_args = unpack_inputs(input_data, device=runtime_device)
+                    call_args = {**tensor_args, **scalar_args}
+                else:
+                    bundle = deserialize_bundle(input_data)
+                    call_args = move_to_device(bundle, runtime_device)
+            except Exception as exc:
+                return _error("input_error", backend, op, exc)
+
+            solution_fn = None
+            if req.role == "res":
+                if not allow_solution_code:
+                    return {
+                        "status": "error",
+                        "backend": backend,
+                        "op": op,
+                        "error": "solution source execution is disabled on this agent",
+                    }
+                if not req.solution_code:
+                    return {
+                        "status": "error",
+                        "backend": backend,
+                        "op": op,
+                        "error": "res request is missing solution_code",
+                    }
+                code_bytes = req.solution_code.encode("utf-8")
+                if len(code_bytes) > max_solution_bytes:
+                    return {
+                        "status": "error",
+                        "backend": backend,
+                        "op": op,
+                        "error": f"solution exceeds {max_solution_bytes} bytes",
+                    }
+                digest = hashlib.sha256(code_bytes).hexdigest()
+                if req.solution_sha256 and digest != req.solution_sha256:
+                    return {
+                        "status": "error",
+                        "backend": backend,
+                        "op": op,
+                        "error": "solution_sha256 does not match solution_code",
+                    }
+                try:
+                    solution_fn = _install_solution(op, req.solution_code)
+                    if solution_fn is None:
+                        return {
+                            "status": "unsupported",
+                            "backend": backend,
+                            "op": op,
+                            "error": f"solution does not define callable {op!r}",
+                        }
+                except Exception as exc:
+                    return _error("solution_error", backend, op, exc)
+
+            roles = vcd.REGISTRY.get(problem_key, {})
+            role_fn = solution_fn if req.input_format == "op_verify" else roles.get(
+                f"{req.role}_compute"
+            )
+            if role_fn is None:
+                return {
+                    "status": "error",
+                    "backend": backend,
+                    "op": op,
+                    "error": f"no {req.role}_compute role registered for {problem_key}",
+                }
+
+            try:
+                out = role_fn(**call_args)
+                timing = benchmark(
+                    lambda: role_fn(**call_args),
+                    runtime_device,
+                    warmup=warmup,
+                    iterations=iterations,
+                )
+                output_key = (
+                    f"jobs/{job_id}/{problem_key}/{req.role}/{backend}/output.safetensors"
+                )
+                storage.put(output_key, serialize_output(out))
+            except Exception as exc:
+                return _error("execution_error", backend, op, exc, status="unsupported")
+
+            return {
+                "status": "success",
+                "backend": backend,
+                "role": req.role,
+                "output_key": output_key,
+                "latency_ms": timing.p50_ms,
+                "timing": timing.as_dict(),
+                "device": device_info(backend, runtime_device),
+            }
 
     return app
 
 
+def _error(kind: str, backend: str, op: str, exc: Exception, status: str = "error") -> dict:
+    return {
+        "status": status,
+        "backend": backend,
+        "op": op,
+        "error_kind": kind,
+        "error": f"{type(exc).__name__}: {exc}",
+    }
+
+
 def _install_solution(op: str, code: str):
-    """exec solution 源码，取 def <op>(...)，setattr 到 kernelgenbench.solution。"""
-    ns: dict = {}
-    exec(compile(code, f"<solution:{op}>", "exec"), ns)
-    fn = ns.get(op)
-    if fn is None:
+    """Compile trusted solution source and expose it to KGB when KGB is present."""
+    namespace: dict = {"__name__": f"vcd_solution_{op}"}
+    exec(compile(code, f"<solution:{op}>", "exec"), namespace)
+    fn = namespace.get(op)
+    if not callable(fn):
         return None
-    if not hasattr(kernelgenbench, "solution"):
-        setattr(kernelgenbench, "solution", types.SimpleNamespace())
-    setattr(kernelgenbench.solution, op, fn)
+    try:
+        kernelgenbench = importlib.import_module("kernelgenbench")
+    except ImportError:
+        kernelgenbench = None
+    if kernelgenbench is not None:
+        if not hasattr(kernelgenbench, "solution"):
+            kernelgenbench.solution = types.SimpleNamespace()
+        setattr(kernelgenbench.solution, op, fn)
     return fn
 
 
-def _device_info(backend: str, device: str) -> dict:
-    info = {"backend": backend, "device": device}
-    if device.startswith("cuda") and torch.cuda.is_available():
-        info["name"] = torch.cuda.get_device_name(0)
-    return info
+def _load_storage(args) -> Storage:
+    if args.storage_config:
+        with open(args.storage_config, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+        spec = raw.get("storage", raw)
+        return make_storage(spec, os.path.dirname(os.path.abspath(args.storage_config)))
+    if not args.storage:
+        raise SystemExit("either --storage or --storage-config is required")
+    return make_storage({"type": "local", "root": args.storage})
+
+
+def _register_test_module(module_name: str, problem_key: str | None) -> None:
+    module = importlib.import_module(module_name)
+    if problem_key:
+        vcd.autowire(module, problem_key)
+        return
+    if vcd.REGISTRY:
+        return
+    try:
+        from examples.kgb_integration import autowire_module
+
+        autowire_module(module)
+    except Exception as exc:
+        raise SystemExit(
+            "cannot derive problem key; pass --problem-key or decorate the module roles explicitly"
+        ) from exc
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--backend", required=True, help="标签：nvidia/amd/ascend（loopback 仅打标签）")
-    ap.add_argument("--port", type=int, required=True)
-    ap.add_argument("--storage", required=True, help="共享存储根目录")
-    ap.add_argument("--test-module", required=True, help="import 的 test 模块（填 REGISTRY+baseline）")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Run a cross-device verification agent")
+    parser.add_argument("--backend", required=True, help="backend label, e.g. musa or ascend")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--storage", help="legacy local/shared storage root")
+    parser.add_argument("--storage-config", help="JSON file containing a storage object")
+    parser.add_argument("--test-module", help="importable problem module (not needed for dataset-only agents)")
+    parser.add_argument("--problem-key", help="registry key; recommended for production")
+    parser.add_argument("--device", default="auto", help="auto/cpu/cuda:0/musa:0/npu:0")
+    parser.add_argument("--auth-token-env", default="VCD_AGENT_TOKEN")
+    parser.add_argument("--require-auth", action="store_true")
+    parser.add_argument("--allow-solution-code", action="store_true")
+    parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--max-solution-bytes", type=int, default=1_000_000)
+    parser.add_argument("--log-level", default="info")
+    args = parser.parse_args()
 
-    mod = importlib.import_module(args.test_module)
-    from examples.kgb_integration import autowire_module
-    autowire_module(mod)  # 按约定名 + @label key 装配 4 角色 → 填充 vcd.REGISTRY
-    storage = LocalStorage(args.storage)
-    app = build_app(args.backend, args.device, storage)
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    token = os.environ.get(args.auth_token_env)
+    if args.require_auth and not token:
+        raise SystemExit(f"required auth token environment variable is unset: {args.auth_token_env}")
+    if args.test_module:
+        _register_test_module(args.test_module, args.problem_key)
+    app = build_app(
+        args.backend,
+        args.device,
+        _load_storage(args),
+        auth_token=token,
+        allow_solution_code=args.allow_solution_code,
+        warmup=args.warmup,
+        iterations=args.iterations,
+        max_solution_bytes=args.max_solution_bytes,
+    )
+    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
 
 if __name__ == "__main__":

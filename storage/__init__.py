@@ -6,6 +6,8 @@
 """
 from .base import Storage
 from .local import LocalStorage
+from .ks3 import KS3Storage
+from .factory import make_storage
 from .serialize import (
     serialize_bundle,
     deserialize_bundle,
@@ -16,6 +18,8 @@ from .serialize import (
 __all__ = [
     "Storage",
     "LocalStorage",
+    "KS3Storage",
+    "make_storage",
     "serialize_bundle",
     "deserialize_bundle",
     "serialize_output",

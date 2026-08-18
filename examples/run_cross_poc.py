@@ -35,7 +35,8 @@ def start_agent(backend, port):
             sys.executable, "-m", "agent.server",
             "--backend", backend, "--port", str(port),
             "--storage", STORE, "--test-module", "examples.test_addmm",
-            "--device", DEVICE,
+            "--problem-key", "addmm", "--device", DEVICE,
+            "--allow-solution-code",
         ],
         env=env, cwd=REPO,
     )

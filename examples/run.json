@@ -1,8 +1,11 @@
 {
+  "problem_key": "addmm",
+  "op": "addmm",
   "reference": {"backend": "nvidia", "agent": "http://127.0.0.1:9101"},
   "targets": {
     "amd":    {"agent": "http://127.0.0.1:9102", "solution": "solutions/addmm/amd.py"},
     "ascend": {"agent": "http://127.0.0.1:9103", "solution": "solutions/addmm/ascend.py"}
   },
-  "storage": "_vcd_store"
+  "storage": {"type": "local", "root": "_vcd_store"},
+  "http": {"connect_timeout": 5, "read_timeout": 300, "retries": 1}
 }

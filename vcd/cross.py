@@ -1,130 +1,169 @@
-"""cross 模式：controller 编排 + agent HTTP 客户端（KGB-agnostic）。
+"""Controller orchestration for cross-device verification."""
+from __future__ import annotations
 
-controller 自己不碰 GPU：input_build 在本机 CPU 生成 → 序列化上传数据层；
-ref/res 转成对各 agent 的 /execute 请求；compare 下载 output 在 CPU 上逐 backend 比较。
-
-run.json（见设计文档 §8.1）：
-  {"reference": {"backend","agent"},
-   "targets": {"<backend>": {"agent","solution"}},
-   "storage": "<local path>"}
-"""
-import json
-import os
+import hashlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
-import requests
+from storage import deserialize_output, make_storage, serialize_bundle
 
 from . import context
-from storage import (
-    LocalStorage,
-    deserialize_output,
-    serialize_bundle,
-)
+from .client import AgentClient
+from .config import RunConfig, load_run_config
+from .decorators import run_compare_body
+from .errors import AgentError
 
 
-def _post(agent_url: str, payload: dict) -> dict:
-    r = requests.post(agent_url.rstrip("/") + "/execute", json=payload, timeout=300)
-    r.raise_for_status()
-    return r.json()
+def _client() -> AgentClient:
+    client = context.cross_client()
+    if client is None:
+        raise RuntimeError("cross client is not configured")
+    return client
 
 
-# ---- 被装饰器 cross 分支调用 ----
 def upload_inputs(key: str, named: dict) -> str:
-    """input_build 产出 → 序列化上传数据层，返回 input_key（并写进 run 上下文）。"""
     storage = context.cross_storage()
-    run_id = uuid.uuid4().hex[:8]
-    input_key = f"{key}/{run_id}/inputs.safetensors"
+    job_id = context.job_id()
+    if not job_id:
+        raise RuntimeError("cross run has no job_id")
+    input_key = f"jobs/{job_id}/{key}/inputs.safetensors"
     storage.put(input_key, serialize_bundle(named))
     context.set_input_key(input_key)
     return input_key
 
 
-def dispatch_ref(key: str) -> dict:
-    cfg = context.cross_config()
-    ref = cfg["reference"]
-    payload = {
-        "job_id": uuid.uuid4().hex[:8],
+def _payload(cfg: RunConfig, key: str, role: str) -> dict[str, Any]:
+    return {
+        "job_id": context.job_id(),
         "problem_key": key,
-        "op": key,
-        "role": "ref",
+        "op": cfg.operation(key),
+        "role": role,
         "input_key": context.input_key(),
     }
-    return _post(ref["agent"], payload)
 
 
-def dispatch_res(key: str) -> dict:
-    cfg = context.cross_config()
-    base = cfg.get("_base", ".")
-    out = {}
-    for backend, spec in cfg["targets"].items():
-        sol_path = os.path.join(base, spec["solution"])
-        with open(sol_path, "r", encoding="utf-8") as f:
-            solution_code = f.read()
-        payload = {
-            "job_id": uuid.uuid4().hex[:8],
-            "problem_key": key,
-            "op": key,
-            "role": "res",
-            "input_key": context.input_key(),
-            "solution_code": solution_code,
+def dispatch_ref(key: str) -> dict:
+    cfg: RunConfig = context.cross_config()
+    response = _client().execute(cfg.reference, _payload(cfg, key, "ref"))
+    if response.get("status") != "success":
+        raise AgentError(
+            f"reference agent {cfg.reference.backend} failed: "
+            f"{response.get('error', response)}"
+        )
+    return response
+
+
+def _dispatch_target(
+    cfg: RunConfig, key: str, name: str, base_payload: dict[str, Any]
+) -> tuple[str, dict]:
+    spec = cfg.targets[name]
+    code = cfg.solution_path(name).read_text(encoding="utf-8")
+    payload = dict(base_payload)
+    payload.update(
+        {
+            "solution_code": code,
+            "solution_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
         }
-        out[backend] = _post(spec["agent"], payload)
-    return out
+    )
+    try:
+        return name, _client().execute(spec, payload)
+    except Exception as exc:
+        return name, {
+            "status": "error",
+            "backend": spec.backend,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def dispatch_res(key: str) -> dict[str, dict]:
+    cfg: RunConfig = context.cross_config()
+    results: dict[str, dict] = {}
+    # Capture thread-local run state before entering worker threads.
+    base_payload = _payload(cfg, key, "res")
+    with ThreadPoolExecutor(max_workers=len(cfg.targets)) as pool:
+        futures = {
+            pool.submit(_dispatch_target, cfg, key, name, base_payload): name
+            for name in cfg.targets
+        }
+        for future in as_completed(futures):
+            name, response = future.result()
+            results[name] = response
+    return {name: results[name] for name in cfg.targets}
+
+
+def _output_shape_error(ref_out, res_out) -> str | None:
+    ref_sequence = isinstance(ref_out, (tuple, list))
+    res_sequence = isinstance(res_out, (tuple, list))
+    if ref_sequence != res_sequence:
+        return "reference and result output structures differ"
+    if ref_sequence and len(ref_out) != len(res_out):
+        return f"output count differs: reference={len(ref_out)}, result={len(res_out)}"
+    return None
 
 
 def run_compare(key: str, body, ref_resp: dict, res_resps: dict, args, kwargs):
-    """下载 ref/res output，逐 backend 跑作者 compare（同 local 契约）+ 记 latency/device。"""
-    from .decorators import run_compare_body
-
     storage = context.cross_storage()
     context.record_latency("ref", ref_resp.get("latency_ms"))
     ref_out = deserialize_output(storage.get(ref_resp["output_key"]))
-    for backend, resp in res_resps.items():
-        head = {"backend": backend, "latency_ms": resp.get("latency_ms"),
-                "device": resp.get("device")}
-        if resp.get("status") != "success":
-            head.update({"passed": False, "status": resp.get("status", "error"),
-                         "error": resp.get("error")})
+    for target_name, response in res_resps.items():
+        head = {
+            "target": target_name,
+            "backend": response.get("backend", target_name),
+            "latency_ms": response.get("latency_ms"),
+            "timing": response.get("timing"),
+            "device": response.get("device"),
+            "status": response.get("status", "error"),
+        }
+        if response.get("status") != "success":
+            head.update({"passed": False, "error": response.get("error", "agent failed")})
             context.record_compare(head)
             continue
-        res_out = deserialize_output(storage.get(resp["output_key"]))
-        rec = run_compare_body(body, ref_out, res_out, args, kwargs)  # 作者比较逻辑
-        rec.update(head)  # 叠加 backend/latency/device
+        try:
+            res_out = deserialize_output(storage.get(response["output_key"]))
+            structure_error = _output_shape_error(ref_out, res_out)
+            if structure_error:
+                rec = {"passed": False, "error": structure_error}
+            else:
+                rec = run_compare_body(body, ref_out, res_out, args, kwargs)
+        except Exception as exc:
+            rec = {"passed": False, "error": f"{type(exc).__name__}: {exc}"}
+        rec.update(head)
         context.record_compare(rec)
 
 
-# ---- controller 驱动 ----
-def _make_storage(spec: str, base: str):
-    if spec.startswith("file://"):
-        spec = spec[len("file://"):]
-    if not os.path.isabs(spec):
-        spec = os.path.join(base, spec)  # 相对 run.json 目录解析
-    return LocalStorage(spec)
-
-
-def load_run_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    cfg["_base"] = os.path.dirname(os.path.abspath(path))
-    return cfg
+def preflight(cfg: RunConfig, client: AgentClient) -> dict[str, dict]:
+    agents = {"reference": cfg.reference, **cfg.targets}
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(agents)) as pool:
+        futures = {pool.submit(client.health, spec): name for name, spec in agents.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            results[name] = future.result()
+    return {name: results[name] for name in agents}
 
 
 def run_cross(test_func, combos, run_config_path: str) -> list[dict]:
     cfg = load_run_config(run_config_path)
-    storage = _make_storage(cfg["storage"], cfg["_base"])
-    context.set_cross(cfg, storage)
+    storage = make_storage(cfg.storage, cfg.base_dir)
+    client = AgentClient(cfg.http)
+    context.set_cross(cfg, storage, client)
+    preflight(cfg, client)
 
     rows = []
-    for combo in combos:
-        context.new_run()
+    for index, combo in enumerate(combos):
+        job_id = uuid.uuid4().hex
+        context.new_run(job_id=job_id)
         error = None
         try:
             test_func(combo)
-        except Exception as e:
-            error = f"{type(e).__name__}: {e}"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
         run = context.run() or {}
         rows.append(
             {
+                "case_index": index,
+                "job_id": job_id,
                 "combo": combo,
                 "compares": run.get("compares", []),
                 "latency": run.get("latency", {}),
@@ -136,22 +175,26 @@ def run_cross(test_func, combos, run_config_path: str) -> list[dict]:
 
 def print_report(key: str, rows: list[dict]):
     print(f"\n=== cross report: {key} ===")
-    for r in rows:
-        if r["error"]:
-            print(f"[ERROR] {r['combo']}: {r['error']}")
+    passed = failed = errors = 0
+    for row in rows:
+        if row["error"]:
+            errors += 1
+            print(f"[ERROR] case={row['case_index']} {row['combo']}: {row['error']}")
             continue
-        ref_ms = r["latency"].get("ref")
-        head = f"{r['combo']}" + (f"   ref={ref_ms:.4f}ms" if ref_ms else "")
-        print(head)
-        for c in r["compares"]:
-            be = c["backend"]
-            if not c.get("passed") and c.get("status") not in (None, "error"):
-                print(f"    [{c['status'].upper()}] {be}")
-                continue
-            verdict = "PASS" if c.get("passed") else "FAIL"
-            lat = c.get("latency_ms")
-            lat_s = f"{lat:.4f}ms" if lat is not None else "-"
-            metrics = f"  {c['metrics']}" if c.get("metrics") else ""
-            err = c.get("error")
-            err_s = f"  ({err.splitlines()[0]})" if err else ""  # 完整消息在 record 里，行内只显首行
-            print(f"    [{verdict}] {be:8} lat={lat_s}{metrics}{err_s}")
+        ref_ms = row["latency"].get("ref")
+        ref_text = f" ref={ref_ms:.4f}ms" if ref_ms is not None else ""
+        print(f"case={row['case_index']} {row['combo']}{ref_text}")
+        for compare in row["compares"]:
+            verdict = "PASS" if compare.get("passed") else "FAIL"
+            passed += verdict == "PASS"
+            failed += verdict == "FAIL"
+            latency = compare.get("latency_ms")
+            latency_text = f"{latency:.4f}ms" if latency is not None else "-"
+            metrics = f" {compare['metrics']}" if compare.get("metrics") else ""
+            error = compare.get("error")
+            error_text = f" ({error.splitlines()[0]})" if error else ""
+            print(
+                f"    [{verdict}] {compare.get('target', compare.get('backend')):8} "
+                f"lat={latency_text}{metrics}{error_text}"
+            )
+    print(f"summary: pass={passed} fail={failed} case_errors={errors}")

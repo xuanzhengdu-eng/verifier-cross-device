@@ -12,7 +12,7 @@ import threading
 _local = threading.local()
 
 # cross 全局：run.json 解析后的配置 + storage 客户端（进程级，不随 run 变）
-_CROSS = {"config": None, "storage": None}
+_CROSS = {"config": None, "storage": None, "client": None}
 
 
 def mode() -> str:
@@ -20,9 +20,10 @@ def mode() -> str:
 
 
 # ---- cross 全局配置 ----
-def set_cross(config: dict, storage):
+def set_cross(config, storage, client=None):
     _CROSS["config"] = config
     _CROSS["storage"] = storage
+    _CROSS["client"] = client
 
 
 def cross_config() -> dict:
@@ -33,9 +34,18 @@ def cross_storage():
     return _CROSS["storage"]
 
 
+def cross_client():
+    return _CROSS["client"]
+
+
 # ---- run-scoped ----
-def new_run():
-    _local.run = {"input_key": None, "compares": [], "latency": {}}
+def new_run(job_id: str | None = None):
+    _local.run = {
+        "job_id": job_id,
+        "input_key": None,
+        "compares": [],
+        "latency": {},
+    }
     return _local.run
 
 
@@ -52,6 +62,11 @@ def set_input_key(key: str):
 def input_key():
     r = run()
     return r["input_key"] if r else None
+
+
+def job_id():
+    r = run()
+    return r["job_id"] if r else None
 
 
 def record_latency(role: str, ms: float):
