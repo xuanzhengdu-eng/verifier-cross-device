@@ -13,7 +13,9 @@
 - `storage/` —— 数据面抽象 + 本地后端 + safetensors 序列化。
 - `examples/` —— PoC 题目（`test_addmm.py`）与跑测脚本。
 
-## 跑 PoC
+## Roadmap
+
+- [ ] **GPU 管理**：agent 侧增加多卡管理（单机多 GPU 的空闲/busy 追踪、进程级隔离）+ 多机管理（controller 侧按 backend 感知哪台机器可用）；目前 PoC 是固定 run.json 绑定，一 backend 对应一个 agent 地址。
 
 ```bash
 # local（单机，无网络）
