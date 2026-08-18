@@ -129,4 +129,5 @@ Ascend FlagGems 实现，见 [Kernel 示例](examples/kernels/README.md)。已�
 - [系统设计](docs/design.md)
 - [任务配置](docs/configuration.md)
 - [部署与运行](docs/deployment.md)
+- [文件说明](docs/files.md)
 - [验证记录](docs/validation.md)
