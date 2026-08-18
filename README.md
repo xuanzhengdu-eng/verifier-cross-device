@@ -118,8 +118,13 @@ CUDA_VISIBLE_DEVICES='' python3 examples/run_local_poc.py
 CUDA_VISIBLE_DEVICES='' python3 examples/run_cross_poc.py
 ```
 
+仓库还提供五组真实设备示例，包含 PyTorch reference、MUSA FlagGems 实现和
+Ascend FlagGems 实现，见 [Kernel 示例](examples/kernels/README.md)。已完成的
+三端验证范围和结果见 [验证记录](docs/validation.md)。
+
 ## 文档
 
 - [系统设计](docs/design.md)
 - [任务配置](docs/configuration.md)
 - [部署与运行](docs/deployment.md)
+- [验证记录](docs/validation.md)
