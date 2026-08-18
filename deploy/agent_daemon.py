@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start/stop a VCD agent while receiving secrets through standard input."""
+"""Start/stop a VCD evaluation service while receiving secrets through stdin."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,8 @@ from pathlib import Path
 
 PID_FILE = Path("/run/vcd-agent.pid")
 LOG_FILE = Path("/var/log/vcd-agent.log")
-ALLOWED_SECRETS = {"OP_VERIFY_KS3_AK", "OP_VERIFY_KS3_SK", "VCD_AGENT_TOKEN"}
+REQUIRED_SECRETS = {"VCD_KS3_AK", "VCD_KS3_SK", "VCD_SERVICE_TOKEN"}
+LEGACY_SECRETS = {"OP_VERIFY_KS3_AK", "OP_VERIFY_KS3_SK", "VCD_AGENT_TOKEN"}
 
 
 def _read_pid() -> int | None:
@@ -32,9 +33,26 @@ def _alive(pid: int | None) -> bool:
     return True
 
 
+def _normalize_secrets(secrets: object) -> dict[str, str]:
+    if not isinstance(secrets, dict):
+        raise ValueError("secret payload must be a JSON object")
+    keys = set(secrets)
+    if keys not in {frozenset(REQUIRED_SECRETS), frozenset(LEGACY_SECRETS)}:
+        raise ValueError(f"secret JSON must contain exactly: {sorted(REQUIRED_SECRETS)}")
+    if not all(isinstance(value, str) and value for value in secrets.values()):
+        raise ValueError("all secret values must be non-empty strings")
+    if keys == LEGACY_SECRETS:
+        return {
+            "VCD_KS3_AK": secrets["OP_VERIFY_KS3_AK"],
+            "VCD_KS3_SK": secrets["OP_VERIFY_KS3_SK"],
+            "VCD_SERVICE_TOKEN": secrets["VCD_AGENT_TOKEN"],
+        }
+    return dict(secrets)
+
+
 def start(agent_args: list[str]) -> None:
     if _alive(_read_pid()):
-        raise SystemExit(f"VCD agent is already running with PID {_read_pid()}")
+        raise SystemExit(f"VCD evaluation service is already running with PID {_read_pid()}")
     if sys.stdin.isatty():
         raise SystemExit("start requires a JSON secret object on standard input")
     raw = sys.stdin.buffer.read(16_385)
@@ -44,10 +62,10 @@ def start(agent_args: list[str]) -> None:
         secrets = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"invalid secret JSON: {exc}") from exc
-    if not isinstance(secrets, dict) or set(secrets) != ALLOWED_SECRETS:
-        raise SystemExit(f"secret JSON must contain exactly: {sorted(ALLOWED_SECRETS)}")
-    if not all(isinstance(value, str) and value for value in secrets.values()):
-        raise SystemExit("all secret values must be non-empty strings")
+    try:
+        secrets = _normalize_secrets(secrets)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     first = os.fork()
     if first:
@@ -58,7 +76,7 @@ def start(agent_args: list[str]) -> None:
                 print(f"started PID {pid}; log={LOG_FILE}")
                 return
             time.sleep(0.1)
-        raise SystemExit("agent daemon did not start")
+        raise SystemExit("evaluation service daemon did not start")
 
     os.setsid()
     second = os.fork()
@@ -75,7 +93,7 @@ def start(agent_args: list[str]) -> None:
     os.environ.update(secrets)
     PID_FILE.write_text(str(os.getpid()), encoding="ascii")
     try:
-        sys.argv = ["vcd-agent", *agent_args]
+        sys.argv = ["vcd-evaluator", *agent_args]
         from agent.server import main
 
         main()
@@ -89,7 +107,7 @@ def start(agent_args: list[str]) -> None:
 def stop() -> None:
     pid = _read_pid()
     if not _alive(pid):
-        print("VCD agent is not running")
+        print("VCD evaluation service is not running")
         try:
             PID_FILE.unlink()
         except FileNotFoundError:
@@ -105,7 +123,7 @@ def stop() -> None:
             print(f"stopped PID {pid}")
             return
         time.sleep(0.1)
-    raise SystemExit(f"agent PID {pid} did not stop within 10 seconds")
+    raise SystemExit(f"evaluation service PID {pid} did not stop within 10 seconds")
 
 
 def status() -> None:

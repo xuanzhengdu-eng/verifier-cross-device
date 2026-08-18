@@ -1,98 +1,112 @@
 # verifier-cross-device
 
-跨机器 Kernel 正确性与性能验证服务。Controller 运行在 `10.0.9.5`，通过 HTTP 调用国产设备 Agent；输入、golden output 和执行结果通过 KS3 交换，控制面不传 Tensor。
+独立、完整的跨机器 Kernel 正确性与性能验证项目。同一份仓库代码部署到 Controller、摩尔线程和华为 910B 三个节点；节点角色只由启动命令和配置决定。
 
-## 当前拓扑
+## 独立性保证
 
-| 设备 | 内部监听 | Controller 访问入口 |
+本仓库已内置完整运行链路：
+
+- Controller 调度、并发请求和 JSON 报告；
+- HTTP 评测服务、Bearer 鉴权和 solution 哈希校验；
+- MUSA、Ascend NPU、CUDA、CPU 设备发现与同步计时；
+- KS3 V2 签名客户端和 Local/KS3 存储后端；
+- KS3 数据集 input/golden 的 safetensors 编解码；
+- standard、exact、mismatch-fraction 正确性检查策略；
+- 基础容器克隆、评测服务守护和设备探测脚本。
+
+运行时不需要克隆、安装或设置 `PYTHONPATH` 指向 `op-verify`。现有 KS3 数据仍位于 `op-verify/v2` 前缀，这是对象存储中的兼容数据路径，不是代码依赖。
+
+第三方 Python 包（PyTorch、FastAPI、requests、safetensors、uvicorn、pydantic）仍需安装；设备服务器应继续使用厂商镜像自带的 PyTorch/MUSA/torch_npu，不要用普通 pip 覆盖。
+
+## 三个节点，一份代码
+
+| 节点 | 运行角色 | 命令 |
 |---|---|---|
-| 摩尔线程 `10.121.38.9` | `0.0.0.0:9100` | `http://100.122.235.76:8002` |
-| 华为 910B `10.0.0.7` | `0.0.0.0:9100` | `http://100.122.173.134:8002` |
+| `10.0.9.5` | Controller | `vcd-controller dataset-run ...` |
+| 摩尔线程 `10.121.38.9` | MUSA 评测服务 | `vcd-evaluator --backend musa --device musa:0 ...` |
+| 华为 910B `10.0.0.7` | Ascend 评测服务 | `vcd-evaluator --backend ascend --device npu:0 ...` |
 
-有效映射：
+Controller 访问入口：
 
 ```text
-100.122.235.76:8002  -> 10.121.38.9:9100
-100.122.173.134:8002 -> 10.0.0.7:9100
+http://100.122.235.76:8002 -> 10.121.38.9:9100
+http://100.122.173.134:8002 -> 10.0.0.7:9100
 ```
 
-业务 HTTP 不经过 JumpServer；JumpServer 只用于 SSH 管理。
-
-## 已实现能力
-
-- Controller/Agent 控制面与 Local/KS3 数据面分离。
-- 直接复用 sibling `op-verify` 的 KS3 客户端、序列化和检查策略。
-- 两种运行方式：
-  - `run`：Controller 生成输入，reference Agent 生成 golden，多个 target Agent 执行 solution。
-  - `dataset-run`：读取 `op-verify` 已上传到 KS3 的输入/golden，两个国产 Agent 都作为 target。
-- MUSA、Ascend NPU、CUDA、CPU 自动发现和显式同步计时，输出 p20/p50/p80/mean。
-- target 并发执行、健康预检、HTTP 超时、Bearer token、solution SHA-256、case 独立 artifact key。
-- safetensors 数据格式，不使用 pickle；本地存储拒绝路径穿越。
-- JSON 报告及非零失败退出码。
-- 基础设备容器只读，使用独立克隆工作容器并支持保存/恢复。
+业务 HTTP 不经过 JumpServer；JumpServer 只用于 SSH 管理。三台机器均主动通过 HTTPS 443 访问 KS3，KS3 不会反向连接服务器。
 
 ## 安装
 
-设备镜像应预装对应厂商的 torch。不要让 pip 覆盖厂商 torch：
+普通 CPU/Controller 环境：
 
 ```bash
-python3 -m pip install -e ../op-verify --no-deps
-python3 -m pip install -e . --no-deps
+python3 -m pip install -e .
 ```
 
-Controller/Agent 均通过环境变量读取凭证：
+已经预装厂商 PyTorch 和全部依赖的设备工作容器：
 
 ```bash
-export OP_VERIFY_KS3_AK='...'
-export OP_VERIFY_KS3_SK='...'
-export VCD_AGENT_TOKEN='...'
+python3 -m pip install -e /opt/verifier-cross-device --no-deps
 ```
 
-不要把实际值写入 JSON、Git 或命令历史。
+`--no-deps` 用于保护厂商 PyTorch，不表示还需要另一个项目。可用下面命令检查当前安装的同一项目版本：
 
-## 启动 Agent
+```bash
+python3 -c "import importlib.metadata as m; print(m.version('verifier-cross-device'))"
+```
+
+## 凭证
+
+三个角色统一使用以下环境变量：
+
+```bash
+export VCD_KS3_AK='...'
+export VCD_KS3_SK='...'
+export VCD_SERVICE_TOKEN='...'
+```
+
+不要把实际值写进 Git、JSON、镜像层或命令历史。评测服务守护脚本支持从标准输入临时注入，详见 [部署文档](docs/deployment.md)。
+
+## 启动两个评测服务
 
 摩尔线程工作容器：
 
 ```bash
-vcd-agent \
+vcd-evaluator \
   --backend musa --device musa:0 \
   --host 0.0.0.0 --port 9100 \
-  --storage-config /opt/vcd/run.ks3.json \
-  --allow-solution-code --require-auth \
-  --iterations 10
+  --storage-config /opt/verifier-cross-device/examples/run.ks3.cross-device.smoke.json \
+  --allow-solution-code --require-auth --iterations 10
 ```
 
-华为工作容器：
+华为 910B 工作容器使用同一命令，只修改设备参数：
 
 ```bash
-vcd-agent \
+vcd-evaluator \
   --backend ascend --device npu:0 \
   --host 0.0.0.0 --port 9100 \
-  --storage-config /opt/vcd/run.ks3.json \
-  --allow-solution-code --require-auth \
-  --iterations 10
+  --storage-config /opt/verifier-cross-device/examples/run.ks3.cross-device.smoke.json \
+  --allow-solution-code --require-auth --iterations 10
 ```
 
-`--allow-solution-code` 只应在隔离工作容器中使用。Agent 不应部署在基础容器或宿主机运行时环境中。
+`vcd-agent` 暂时保留为兼容命令，正式文档统一称为“评测服务”。`--allow-solution-code` 只允许在隔离工作容器中使用。
 
-## 使用 KS3 golden 验证
+## 发起 KS3 数据集验证
 
-复制 [run.ks3.cross-device.example.json](examples/run.ks3.cross-device.example.json)，把两个 `solution` 路径替换成该题目的摩尔/华为实现，然后运行：
+复制 [配置模板](examples/run.ks3.cross-device.example.json)，把两端 `solution` 路径替换为题目的平台实现，然后在 `10.0.9.5` 运行：
 
 ```bash
-PYTHONPATH=../op-verify:$PYTHONPATH \
 vcd-controller dataset-run \
-  --config examples/run.ks3.cross-device.json \
+  --config examples/run.ks3.cross-device.smoke.json \
   --problem activation_norm/relu2 \
   --case 0 \
   --op reference \
   --report reports/relu2.json
 ```
 
-真实 solution 的函数名不是 `reference` 时，用 `--op` 指定其入口函数名。
+Controller 读取同一份输入和 golden，两个评测服务分别在国产设备上执行各自 solution，最终由 Controller 统一比较并生成报告。solution 的函数名不是题目 basename 时用 `--op` 指定。
 
-## 回归测试
+## 测试
 
 ```bash
 CUDA_VISIBLE_DEVICES='' python3 -m unittest discover -s tests -v
@@ -100,4 +114,4 @@ CUDA_VISIBLE_DEVICES='' python3 examples/run_local_poc.py
 CUDA_VISIBLE_DEVICES='' python3 examples/run_cross_poc.py
 ```
 
-KS3 loopback 回归配置见 [run.ks3.loopback.json](examples/run.ks3.loopback.json)。完整架构见 [design.md](docs/design.md)，克隆容器部署流程见 [deployment.md](docs/deployment.md)。
+完整架构见 [设计文档](docs/design.md)，两台服务器的克隆容器流程见 [部署文档](docs/deployment.md)。

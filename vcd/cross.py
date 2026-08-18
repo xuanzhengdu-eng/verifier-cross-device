@@ -48,7 +48,7 @@ def dispatch_ref(key: str) -> dict:
     response = _client().execute(cfg.reference, _payload(cfg, key, "ref"))
     if response.get("status") != "success":
         raise AgentError(
-            f"reference agent {cfg.reference.backend} failed: "
+            f"reference evaluation service {cfg.reference.backend} failed: "
             f"{response.get('error', response)}"
         )
     return response
@@ -116,7 +116,12 @@ def run_compare(key: str, body, ref_resp: dict, res_resps: dict, args, kwargs):
             "status": response.get("status", "error"),
         }
         if response.get("status") != "success":
-            head.update({"passed": False, "error": response.get("error", "agent failed")})
+            head.update(
+                {
+                    "passed": False,
+                    "error": response.get("error", "evaluation service failed"),
+                }
+            )
             context.record_compare(head)
             continue
         try:

@@ -2,15 +2,15 @@
   "targets": {
     "moer": {
       "backend": "musa",
-      "agent": "http://100.122.235.76:8002",
+      "service": "http://100.122.235.76:8002",
       "solution": "solutions/relu2/reference.py",
-      "token_env": "VCD_AGENT_TOKEN"
+      "token_env": "VCD_SERVICE_TOKEN"
     },
     "huawei": {
       "backend": "ascend",
-      "agent": "http://100.122.173.134:8002",
+      "service": "http://100.122.173.134:8002",
       "solution": "solutions/relu2/reference.py",
-      "token_env": "VCD_AGENT_TOKEN"
+      "token_env": "VCD_SERVICE_TOKEN"
     }
   },
   "storage": {
@@ -19,8 +19,8 @@
     "endpoint": "ks3-cn-beijing.ksyuncs.com",
     "bucket": "baai-sailing",
     "prefix": "op-verify/v2",
-    "ak_env": "OP_VERIFY_KS3_AK",
-    "sk_env": "OP_VERIFY_KS3_SK"
+    "ak_env": "VCD_KS3_AK",
+    "sk_env": "VCD_KS3_SK"
   },
   "http": {
     "connect_timeout": 10,

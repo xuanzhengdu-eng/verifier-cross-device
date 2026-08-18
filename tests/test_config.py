@@ -9,11 +9,11 @@ from vcd.errors import ConfigError
 
 
 class ConfigTests(unittest.TestCase):
-    def test_rejects_credentials_in_agent_url(self):
+    def test_rejects_credentials_in_service_url(self):
         with self.assertRaises(ConfigError):
             AgentSpec.from_dict(
-                {"backend": "bad", "agent": "http://user:password@example.test"},
-                "agent",
+                {"backend": "bad", "service": "http://user:password@example.test"},
+                "service",
             )
 
     def test_resolves_solution_and_token_from_environment(self):
@@ -22,10 +22,10 @@ class ConfigTests(unittest.TestCase):
             (root / "solution.py").write_text("def add(x): return x\n", encoding="utf-8")
             config = {
                 "problem_key": "add",
-                "reference": {"backend": "ref", "agent": "http://127.0.0.1:1"},
+                "reference": {"backend": "ref", "service": "http://127.0.0.1:1"},
                 "targets": {
                     "target": {
-                        "agent": "http://127.0.0.1:2",
+                        "service": "http://127.0.0.1:2",
                         "solution": "solution.py",
                         "token_env": "VCD_TEST_TOKEN",
                     }
@@ -46,7 +46,12 @@ class ConfigTests(unittest.TestCase):
                 else:
                     os.environ["VCD_TEST_TOKEN"] = old
 
+    def test_legacy_agent_key_remains_compatible(self):
+        spec = AgentSpec.from_dict(
+            {"backend": "cpu", "agent": "http://127.0.0.1:9100"}, "target"
+        )
+        self.assertEqual(spec.url, "http://127.0.0.1:9100")
+
 
 if __name__ == "__main__":
     unittest.main()
-

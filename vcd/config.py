@@ -29,12 +29,14 @@ class AgentSpec:
         if not isinstance(raw, dict):
             raise ConfigError(f"{where} must be an object")
         backend = _require_string(raw.get("backend", default_backend), f"{where}.backend")
-        url = _require_string(raw.get("agent", raw.get("url")), f"{where}.agent")
+        url = _require_string(
+            raw.get("service", raw.get("agent", raw.get("url"))), f"{where}.service"
+        )
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ConfigError(f"{where}.agent must be an http(s) URL")
+            raise ConfigError(f"{where}.service must be an http(s) URL")
         if parsed.username or parsed.password:
-            raise ConfigError(f"{where}.agent must not contain credentials")
+            raise ConfigError(f"{where}.service must not contain credentials")
         solution = raw.get("solution")
         if solution is not None:
             solution = _require_string(solution, f"{where}.solution")
@@ -48,7 +50,9 @@ class AgentSpec:
             return None
         value = os.environ.get(self.token_env)
         if not value:
-            raise ConfigError(f"required agent token environment variable is unset: {self.token_env}")
+            raise ConfigError(
+                f"required service token environment variable is unset: {self.token_env}"
+            )
         return value
 
 

@@ -7,9 +7,8 @@ class ConfigError(VcdError):
 
 
 class AgentError(VcdError):
-    """Raised when an agent cannot complete a request."""
+    """Raised when an evaluation service cannot complete a request."""
 
 
 class StorageError(VcdError):
     """Raised when an artifact store operation fails."""
-

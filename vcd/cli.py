@@ -49,7 +49,9 @@ def run_command(args) -> int:
 def main():
     parser = argparse.ArgumentParser(description="Cross-device kernel verification controller")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    run = subparsers.add_parser("run", help="run one problem across configured agents")
+    run = subparsers.add_parser(
+        "run", help="run one problem across configured evaluation services"
+    )
     run.add_argument("--config", required=True)
     run.add_argument("--module", required=True)
     run.add_argument("--test", required=True)
@@ -59,7 +61,7 @@ def main():
     run.set_defaults(func=run_command)
 
     dataset = subparsers.add_parser(
-        "dataset-run", help="run kernels against op-verify inputs and golden outputs in KS3"
+        "dataset-run", help="run kernels against manifest inputs and golden outputs in KS3"
     )
     dataset.add_argument("--config", required=True)
     dataset.add_argument("--problem", required=True)

@@ -1,9 +1,9 @@
-"""Cross-device execution agent.
+"""Cross-device evaluation service.
 
-The agent receives only artifact references and small control messages. Inputs and
+The service receives only artifact references and small control messages. Inputs and
 outputs travel through the configured Storage backend. Submitted solution source
 is intentionally disabled unless the process is started with
-``--allow-solution-code``; run the agent only inside an isolated work container.
+``--allow-solution-code``; run the service only inside an isolated work container.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class ExecRequest(BaseModel):
     problem_key: str = Field(min_length=1, max_length=200)
     op: str = Field(min_length=1, max_length=200)
     role: Literal["ref", "res"]
-    input_format: Literal["vcd", "op_verify"] = "vcd"
+    input_format: Literal["vcd", "dataset", "op_verify"] = "vcd"
     input_key: str = Field(min_length=1, max_length=1024)
     solution_code: str | None = None
     solution_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
@@ -66,15 +66,15 @@ def build_app(
 ) -> FastAPI:
     runtime_device = detect_device(device)
     execute_lock = threading.Lock()
-    app = FastAPI(title=f"vcd-agent[{backend}]", version="0.2.0")
+    app = FastAPI(title=f"vcd-evaluator[{backend}]", version="0.3.0")
 
     @app.get("/health")
     def health(authorization: str | None = Header(default=None)):
         _verify_bearer(auth_token, authorization)
         return {
             "status": "ok",
-            "service": "vcd-agent",
-            "version": "0.2.0",
+            "service": "vcd-evaluator",
+            "version": "0.3.0",
             "device": device_info(backend, runtime_device),
             "registered_problems": sorted(vcd.REGISTRY),
         }
@@ -92,8 +92,8 @@ def build_app(
         with execute_lock:
             try:
                 input_data = storage.get(req.input_key)
-                if req.input_format == "op_verify":
-                    from op_verify.serialization import unpack_inputs
+                if req.input_format in {"dataset", "op_verify"}:
+                    from vcd.dataset_format import unpack_inputs
 
                     tensor_args, scalar_args = unpack_inputs(input_data, device=runtime_device)
                     call_args = {**tensor_args, **scalar_args}
@@ -110,7 +110,7 @@ def build_app(
                         "status": "error",
                         "backend": backend,
                         "op": op,
-                        "error": "solution source execution is disabled on this agent",
+                        "error": "solution source execution is disabled on this service",
                     }
                 if not req.solution_code:
                     return {
@@ -148,7 +148,7 @@ def build_app(
                     return _error("solution_error", backend, op, exc)
 
             roles = vcd.REGISTRY.get(problem_key, {})
-            role_fn = solution_fn if req.input_format == "op_verify" else roles.get(
+            role_fn = solution_fn if req.input_format in {"dataset", "op_verify"} else roles.get(
                 f"{req.role}_compute"
             )
             if role_fn is None:
@@ -244,16 +244,18 @@ def _register_test_module(module_name: str, problem_key: str | None) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a cross-device verification agent")
+    parser = argparse.ArgumentParser(description="Run a cross-device evaluation service")
     parser.add_argument("--backend", required=True, help="backend label, e.g. musa or ascend")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--storage", help="legacy local/shared storage root")
     parser.add_argument("--storage-config", help="JSON file containing a storage object")
-    parser.add_argument("--test-module", help="importable problem module (not needed for dataset-only agents)")
+    parser.add_argument(
+        "--test-module", help="importable problem module (not needed for dataset-only services)"
+    )
     parser.add_argument("--problem-key", help="registry key; recommended for production")
     parser.add_argument("--device", default="auto", help="auto/cpu/cuda:0/musa:0/npu:0")
-    parser.add_argument("--auth-token-env", default="VCD_AGENT_TOKEN")
+    parser.add_argument("--auth-token-env", default="VCD_SERVICE_TOKEN")
     parser.add_argument("--require-auth", action="store_true")
     parser.add_argument("--allow-solution-code", action="store_true")
     parser.add_argument("--warmup", type=int, default=3)

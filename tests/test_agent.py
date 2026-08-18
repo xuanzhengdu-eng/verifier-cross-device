@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import vcd
 from agent.server import build_app
 from storage import LocalStorage, deserialize_output, serialize_bundle
+from vcd.dataset_format import pack_inputs
 
 
 class AgentTests(unittest.TestCase):
@@ -86,7 +87,27 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(bad["status"], "error")
         self.assertIn("does not match", bad["error"])
 
+    def test_dataset_execution_uses_in_tree_format(self):
+        self.storage.put("dataset-input.safetensors", pack_inputs({"x": torch.tensor([4.0])}))
+        code = "def add_one(x):\n    return x + 1\n"
+        payload = self._payload("res")
+        payload.update(
+            {
+                "input_format": "dataset",
+                "input_key": "dataset-input.safetensors",
+                "solution_code": code,
+                "solution_sha256": hashlib.sha256(code.encode()).hexdigest(),
+            }
+        )
+        response = self.client.post(
+            "/execute", json=payload, headers=self.headers
+        ).json()
+        self.assertEqual(response["status"], "success")
+        torch.testing.assert_close(
+            deserialize_output(self.storage.get(response["output_key"])),
+            torch.tensor([5.0]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

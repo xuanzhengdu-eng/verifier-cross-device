@@ -1,4 +1,4 @@
-"""Run submitted kernels against op-verify datasets stored in KS3."""
+"""Run submitted kernels against manifest-based datasets stored in KS3."""
 from __future__ import annotations
 
 import hashlib
@@ -13,8 +13,10 @@ import torch
 
 from storage import deserialize_output, make_storage
 
+from .checks import make_check_fn
 from .client import AgentClient
 from .config import AgentSpec, HttpConfig
+from .dataset_format import unpack_outputs
 from .errors import ConfigError
 
 
@@ -91,12 +93,6 @@ def run_dataset(
     cases: list[int] | None = None,
     op: str | None = None,
 ) -> list[dict[str, Any]]:
-    try:
-        from op_verify.check_strategies import make_check_fn
-        from op_verify.serialization import unpack_outputs
-    except ImportError as exc:
-        raise RuntimeError("dataset mode requires the sibling op-verify package") from exc
-
     cfg = DatasetConfig.load(config_path)
     storage = make_storage(cfg.storage, cfg.base_dir)
     client = AgentClient(cfg.http)
@@ -141,7 +137,7 @@ def run_dataset(
                 "problem_key": problem,
                 "op": operation,
                 "role": "res",
-                "input_format": "op_verify",
+                "input_format": "dataset",
                 "input_key": input_key,
                 "solution_code": code,
                 "solution_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
@@ -168,7 +164,12 @@ def run_dataset(
                 "device": response.get("device"),
             }
             if response.get("status") != "success":
-                record.update({"passed": False, "error": response.get("error", "agent failed")})
+                record.update(
+                    {
+                        "passed": False,
+                        "error": response.get("error", "evaluation service failed"),
+                    }
+                )
             else:
                 try:
                     actual = _as_output_list(
@@ -227,4 +228,3 @@ def print_dataset_report(problem: str, rows: list[dict[str, Any]]) -> None:
             error_text = f" ({error.splitlines()[0]})" if error else ""
             print(f"    [{verdict}] {result['target']:8} lat={latency_text}{error_text}")
     print(f"summary: pass={passed} fail={failed}")
-

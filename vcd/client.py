@@ -1,4 +1,4 @@
-"""Resilient HTTP client for VCD agents."""
+"""Resilient HTTP client for VCD evaluation services."""
 from __future__ import annotations
 
 from typing import Any
@@ -41,9 +41,11 @@ class AgentClient:
             response.raise_for_status()
             body = response.json()
         except (requests.RequestException, ValueError) as exc:
-            raise AgentError(f"agent {spec.backend} health check failed at {spec.url}: {exc}") from exc
+            raise AgentError(
+                f"evaluation service {spec.backend} health check failed at {spec.url}: {exc}"
+            ) from exc
         if body.get("status") != "ok":
-            raise AgentError(f"agent {spec.backend} is not healthy: {body}")
+            raise AgentError(f"evaluation service {spec.backend} is not healthy: {body}")
         return body
 
     def execute(self, spec: AgentSpec, payload: dict[str, Any]) -> dict[str, Any]:
@@ -57,13 +59,18 @@ class AgentClient:
             if not response.ok:
                 detail = response.text[:1000]
                 raise AgentError(
-                    f"agent {spec.backend} returned HTTP {response.status_code}: {detail}"
+                    f"evaluation service {spec.backend} returned HTTP "
+                    f"{response.status_code}: {detail}"
                 )
             body = response.json()
         except AgentError:
             raise
         except (requests.RequestException, ValueError) as exc:
-            raise AgentError(f"agent {spec.backend} execute failed at {spec.url}: {exc}") from exc
+            raise AgentError(
+                f"evaluation service {spec.backend} execute failed at {spec.url}: {exc}"
+            ) from exc
         if not isinstance(body, dict):
-            raise AgentError(f"agent {spec.backend} returned a non-object response")
+            raise AgentError(
+                f"evaluation service {spec.backend} returned a non-object response"
+            )
         return body

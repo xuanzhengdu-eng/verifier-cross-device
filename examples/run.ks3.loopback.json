@@ -2,7 +2,7 @@
   "targets": {
     "cpu": {
       "backend": "cpu",
-      "agent": "http://127.0.0.1:19100",
+      "service": "http://127.0.0.1:19100",
       "solution": "solutions/relu2/reference.py"
     }
   },
@@ -12,8 +12,8 @@
     "endpoint": "ks3-cn-beijing.ksyuncs.com",
     "bucket": "baai-sailing",
     "prefix": "op-verify/v2",
-    "ak_env": "OP_VERIFY_KS3_AK",
-    "sk_env": "OP_VERIFY_KS3_SK"
+    "ak_env": "VCD_KS3_AK",
+    "sk_env": "VCD_KS3_SK"
   },
   "http": {
     "connect_timeout": 5,
@@ -21,4 +21,3 @@
     "retries": 1
   }
 }
-
