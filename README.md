@@ -131,3 +131,8 @@ Ascend FlagGems 实现，见 [Kernel 示例](examples/kernels/README.md)。已�
 - [部署与运行](docs/deployment.md)
 - [文件说明](docs/files.md)
 - [验证记录](docs/validation.md)
+
+## Roadmap
+
+- [ ] **GPU 管理**：agent 侧增加多卡管理（单机多 GPU 的空闲/busy 追踪、进程级隔离）+ 多机管理（controller 侧按 backend 感知哪台机器可用）；目前 PoC 是固定 run.json 绑定，一 backend 对应一个 agent 地址。
+- [ ] **input_build 模式**：支持两种模式——每次重新生成新输入（当前行为）、复用 storage 中已有的输入包（跳过 input_build，直接用已物化的 artifact）；适合多次跑同一组输入对比不同 solution。
