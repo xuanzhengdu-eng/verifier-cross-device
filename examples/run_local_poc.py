@@ -1,7 +1,7 @@
 """local 模式 PoC 启动器：用和 cross **完全相同**的 examples/test_addmm.py。
 
 唯一区别在启动器、不在 test 文件：跑前把一个 solution.py 装进 kernelgenbench.solution
-——对应 cross 里各 agent 从 run.json 装 solution；local 就是 controller+agent 合体在一个进程。
+对应跨设备模式中评测服务从任务配置加载 solution；local 模式在单进程完成相同逻辑。
 （真实 KGB 入口对应 `VCD_MODE=local test_single_operator <solution.py> --test-module test_addmm.py`。）
 
 跑法：python examples/run_local_poc.py
@@ -27,7 +27,7 @@ autowire_module(T)  # 按约定名 + @label 装配 4 角色（免手写 @vcd.*�
 
 
 def install_solution(op: str, path: str):
-    """和 agent 装 solution 同一套：exec .py，取 def <op>，挂到 kernelgenbench.solution。"""
+    """加载 solution 文件并将入口函数注册到 kernelgenbench.solution。"""
     ns: dict = {}
     exec(compile(open(path).read(), path, "exec"), ns)
     if not hasattr(kernelgenbench, "solution"):

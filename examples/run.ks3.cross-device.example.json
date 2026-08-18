@@ -1,14 +1,20 @@
 {
+  "reference": {
+    "backend": "cuda",
+    "service": "http://nvidia-evaluator.example:9100",
+    "solution": "solutions/<problem>/reference.py",
+    "token_env": "VCD_SERVICE_TOKEN"
+  },
   "targets": {
     "moer": {
       "backend": "musa",
-      "service": "http://100.122.235.76:8002",
+      "service": "http://moer-evaluator.example:9100",
       "solution": "solutions/<problem>/moer.py",
       "token_env": "VCD_SERVICE_TOKEN"
     },
     "huawei": {
       "backend": "ascend",
-      "service": "http://100.122.173.134:8002",
+      "service": "http://huawei-evaluator.example:9100",
       "solution": "solutions/<problem>/huawei.py",
       "token_env": "VCD_SERVICE_TOKEN"
     }
@@ -16,9 +22,9 @@
   "storage": {
     "type": "ks3",
     "scheme": "https",
-    "endpoint": "ks3-cn-beijing.ksyuncs.com",
-    "bucket": "baai-sailing",
-    "prefix": "op-verify/v2",
+    "endpoint": "ks3.example.com",
+    "bucket": "kernel-verification",
+    "prefix": "datasets/v1",
     "ak_env": "VCD_KS3_AK",
     "sk_env": "VCD_KS3_SK"
   },

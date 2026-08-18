@@ -1,8 +1,7 @@
 """Read and write the KS3 dataset safetensors protocol used by VCD.
 
-The wire format intentionally remains compatible with datasets already stored
-under ``op-verify/v2``.  The implementation lives here so every VCD node needs
-only this repository at runtime.
+The implementation is maintained in-tree so every VCD node uses the same format
+without depending on another source repository.
 """
 from __future__ import annotations
 

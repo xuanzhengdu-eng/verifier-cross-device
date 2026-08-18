@@ -1,17 +1,22 @@
 {
+  "reference": {
+    "backend": "cpu-reference",
+    "service": "http://127.0.0.1:19100",
+    "solution": "solutions/relu2/reference.py"
+  },
   "targets": {
-    "cpu": {
-      "backend": "cpu",
-      "service": "http://127.0.0.1:19100",
+    "cpu_target": {
+      "backend": "cpu-target",
+      "service": "http://127.0.0.1:19101",
       "solution": "solutions/relu2/reference.py"
     }
   },
   "storage": {
     "type": "ks3",
     "scheme": "https",
-    "endpoint": "ks3-cn-beijing.ksyuncs.com",
-    "bucket": "baai-sailing",
-    "prefix": "op-verify/v2",
+    "endpoint": "ks3.example.com",
+    "bucket": "kernel-verification",
+    "prefix": "datasets/v1",
     "ak_env": "VCD_KS3_AK",
     "sk_env": "VCD_KS3_SK"
   },

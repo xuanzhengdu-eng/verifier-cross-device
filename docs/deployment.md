@@ -1,140 +1,151 @@
-# 同一份代码部署到三个节点
+# 部署与运行
 
-## 原则
+## 1. 部署原则
 
-1. `10.0.9.5`、摩尔线程工作容器、华为工作容器使用同一个 Git commit 的 `verifier-cross-device`。
-2. 不再复制或安装 `op-verify`；VCD 已包含 KS3、数据格式和校验实现。
-3. 三端差异只存在于启动命令、设备参数和 Controller 配置。
-4. 不修改两个 `gosim_server` 基础容器。
-5. 密钥只在进程启动时注入，不写入代码、配置或镜像。
+Controller、reference 节点和所有 target 节点必须使用同一版本的 `verifier-cross-device`。建议以固定 Git commit、wheel 或经过校验的源码归档作为发布单元。
 
-部署前在三个节点分别确认代码版本；输出必须一致：
+部署角色分为：
 
-```bash
-git -C /opt/verifier-cross-device rev-parse HEAD
-```
+- Controller：运行调度和结果比较；
+- Evaluation service：运行 reference 或 target Kernel；
+- Object storage：保存数据集输入和任务输出。
 
-如果以不含 `.git` 的归档部署，则记录归档来源 commit，并用下面命令确认包版本：
+reference 与 target 不需要不同的软件包。
 
-```bash
-python3 -c "import importlib.metadata as m; print(m.version('verifier-cross-device'))"
-```
+## 2. 环境要求
 
-## 两台设备首次克隆容器
+所有节点要求 Python 3.10 或更高。评测节点还需要：
 
-把本仓库的 `deploy/container_clone.py` 复制到设备宿主机。摩尔线程：
+- 对应设备驱动和运行时；
+- 与设备匹配的 PyTorch 发行版；
+- FastAPI、pydantic、requests、safetensors 和 uvicorn；
+- 到对象存储的网络访问能力。
 
-```bash
-python3 container_clone.py clone \
-  --base gosim_server \
-  --work vcd-moer-work \
-  --snapshot-image vcd/moer-base:20260818 \
-  --host-port 9100 --container-port 9100
-```
+Controller 不要求加速卡，但需要安装 PyTorch CPU 版本以读取和比较输出。
 
-华为 910B：
+## 3. 发布同一代码版本
+
+在发布端生成固定版本构件：
 
 ```bash
-python3 container_clone.py clone \
-  --base gosim_server \
-  --work vcd-huawei-work \
-  --snapshot-image vcd/huawei-base:20260818 \
-  --host-port 9100 --container-port 9100
+git rev-parse HEAD
+python3 -m pip wheel --no-deps . --wheel-dir dist
+sha256sum dist/verifier_cross_device-*.whl
 ```
 
-克隆工具拒绝使用相同的基础/工作容器名，也拒绝覆盖已有工作容器。默认排除 `/data`、`/home`、`/root` 共享挂载。华为基础容器使用 host network，因此不会再创建 Docker 端口映射；摩尔 bridge network 使用 `9100:9100`。
-
-## 部署同一仓库
-
-在 `10.0.9.5` 安装完整依赖：
+所有节点安装同一 wheel，或检出同一 commit：
 
 ```bash
-cd /root/workspace/dxz-workspace/cross-device-kernel-verification/verifier-cross-device
-python3 -m pip install -e .
+python3 -m pip install verifier_cross_device-<version>-py3-none-any.whl --no-deps
 ```
 
-将这同一个仓库快照分别放入两个工作容器的 `/opt/verifier-cross-device`，只安装 VCD：
+设备镜像已包含厂商 PyTorch 时使用 `--no-deps`，防止通用 PyTorch 覆盖设备版本。普通依赖应在镜像构建阶段显式安装和锁定。
+
+## 4. 隔离评测环境
+
+评测服务会执行任务提供的 solution，应部署在独立工作容器中。现有设备基础容器仅用于生成工作镜像，不应直接安装项目或运行评测任务。
+
+仓库提供 `deploy/container_clone.py` 创建和保存工作容器：
 
 ```bash
-docker cp verifier-cross-device vcd-DEVICE-work:/opt/verifier-cross-device
-docker exec vcd-DEVICE-work \
-  python3 -m pip install -e /opt/verifier-cross-device --no-deps
+python3 deploy/container_clone.py clone \
+  --base <base-container> \
+  --work <evaluation-container> \
+  --snapshot-image <base-snapshot-image> \
+  --host-port 9100 \
+  --container-port 9100
 ```
 
-设备容器的 `--no-deps` 用来保护厂商 PyTorch。部署前应确认 FastAPI、pydantic、requests、safetensors、uvicorn 已存在；缺少普通依赖时单独安装，不能替换厂商 torch。
-
-## 启动评测服务
-
-推荐通过已安装命令 `vcd-evaluator-daemon` 从标准输入读取且只读取：
-
-```json
-{"VCD_KS3_AK":"...","VCD_KS3_SK":"...","VCD_SERVICE_TOKEN":"..."}
-```
-
-摩尔线程参数：
+工作容器可以按阶段保存：
 
 ```bash
-python3 -c 'import json,os; print(json.dumps({k:os.environ[k] for k in ("VCD_KS3_AK","VCD_KS3_SK","VCD_SERVICE_TOKEN")}))' | \
-vcd-evaluator-daemon start -- \
-  --backend musa --device musa:0 \
-  --host 0.0.0.0 --port 9100 \
-  --storage-config /opt/verifier-cross-device/examples/run.ks3.cross-device.smoke.json \
-  --allow-solution-code --require-auth --iterations 10
-```
-
-华为参数仅修改 backend/device：
-
-```bash
-python3 -c 'import json,os; print(json.dumps({k:os.environ[k] for k in ("VCD_KS3_AK","VCD_KS3_SK","VCD_SERVICE_TOKEN")}))' | \
-vcd-evaluator-daemon start -- \
-  --backend ascend --device npu:0 \
-  --host 0.0.0.0 --port 9100 \
-  --storage-config /opt/verifier-cross-device/examples/run.ks3.cross-device.smoke.json \
-  --allow-solution-code --require-auth --iterations 10
-```
-
-PID 和日志分别位于 `/run/vcd-agent.pid`、`/var/log/vcd-agent.log`，文件名为旧版本兼容而保留。查看/停止：
-
-```bash
-vcd-evaluator-daemon status
-vcd-evaluator-daemon stop
-```
-
-切换正式评测服务前，应停止旧的宿主机端口测试监听并确认 9100 空闲：
-
-```bash
-systemctl stop cross-device-listener-9100.service
-ss -lntp | grep ':9100'
-```
-
-## Controller
-
-`10.0.9.5` 使用同一仓库的 `vcd-controller` 命令；配置中的 `service` URL 和 solution 路径决定调用哪个评测服务、下发哪份平台实现：
-
-```bash
-vcd-controller dataset-run \
-  --config examples/run.ks3.cross-device.smoke.json \
-  --problem activation_norm/relu2 \
-  --case 0 --op reference \
-  --report reports/relu2.json
-```
-
-## 保存与恢复工作容器
-
-保存前停止评测服务，再保存并停止工作容器：
-
-```bash
-vcd-evaluator-daemon stop
-python3 container_clone.py save \
-  --work vcd-DEVICE-work \
-  --image vcd/DEVICE-work:20260818-v2 \
+python3 deploy/container_clone.py save \
+  --work <evaluation-container> \
+  --image <evaluation-image:version> \
   --stop
 ```
 
-下次继续使用：
+## 5. 对象存储配置
 
-```bash
-python3 container_clone.py resume --work vcd-DEVICE-work
+每个评测服务只需要存储配置，不需要完整任务配置。参考 [存储配置模板](../examples/storage.ks3.example.json)：
+
+```json
+{
+  "type": "ks3",
+  "scheme": "https",
+  "endpoint": "ks3.example.com",
+  "bucket": "kernel-verification",
+  "prefix": "datasets/v1",
+  "ak_env": "VCD_KS3_AK",
+  "sk_env": "VCD_KS3_SK"
+}
 ```
 
-容器文件系统会保留，版本镜像用于回滚。环境变量密钥不会被 commit 保存，恢复后必须重新注入并启动评测服务。
+将配置部署为 `/etc/vcd/storage.json`。配置只保存环境变量名称，不保存实际凭证。
+
+## 6. 启动评测服务
+
+统一环境变量：
+
+```bash
+export VCD_KS3_AK='<access-key>'
+export VCD_KS3_SK='<secret-key>'
+export VCD_SERVICE_TOKEN='<service-token>'
+```
+
+NVIDIA reference 示例：
+
+```bash
+vcd-evaluator \
+  --backend cuda --device cuda:0 \
+  --host 0.0.0.0 --port 9100 \
+  --storage-config /etc/vcd/storage.json \
+  --allow-solution-code --require-auth
+```
+
+target 使用同一完整命令，只修改 `--backend` 和 `--device`。例如摩尔线程使用
+`--backend musa --device musa:0`，华为 Ascend 使用
+`--backend ascend --device npu:0`。
+
+需要后台运行时，可使用 `vcd-evaluator-daemon`。该命令从标准输入接收 JSON 凭证，不将密钥写入命令参数或镜像层。
+
+## 7. 健康检查
+
+Controller 执行任务前会调用每个服务的 `/health`。也可以独立检查：
+
+```bash
+curl \
+  -H "Authorization: Bearer ${VCD_SERVICE_TOKEN}" \
+  http://<evaluation-service>:9100/health
+```
+
+响应应包含服务版本、backend、device、PyTorch 版本和设备名称。正式任务开始前应确认所有节点的软件版本一致。
+
+## 8. Controller 配置与运行
+
+Controller 使用完整任务配置，包含一个 reference 和一个或多个 targets。配置格式见 [任务配置](configuration.md)。
+
+```bash
+vcd-controller dataset-run \
+  --config /etc/vcd/run.json \
+  --problem <problem-key> \
+  --case <case-index> \
+  --op <entry-function> \
+  --report /var/lib/vcd/reports/result.json
+```
+
+任务配置中的 solution 文件只需要存在于 Controller。Controller 会读取源码、计算 SHA-256 并通过控制面发送给对应评测服务。
+
+## 9. 升级与回滚
+
+升级顺序建议为：
+
+1. 构建并校验新版本；
+2. 停止评测服务；
+3. 保存当前工作容器或镜像；
+4. 在所有节点安装同一新版本；
+5. 启动服务并检查 `/health`；
+6. 执行小规模回归 case；
+7. 再开放正式任务。
+
+回滚时恢复上一版本镜像或安装上一版本 wheel，并重新注入运行时凭证。

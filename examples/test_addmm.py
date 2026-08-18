@@ -3,8 +3,8 @@
 **无手写 `@vcd.*`**：框架按函数名约定（input_build/compute_ref/compute_res/compare）
 + `@label` 的 key 自动装配（见 vcd.autowire）。local/cross 共用此文件，一字不改。
 
-被 controller（取 test_ / COMBOS）和各 agent（填角色函数 + kernelgenbench.baseline）共同 import。
-input_build 在 CPU 生成；solution 由 local 启动器 / 各 res agent 安装到 kernelgenbench.solution。
+由 Controller 和评测服务共同加载。input_build 在 CPU 生成，solution 注册到
+kernelgenbench.solution。
 """
 import types
 
@@ -13,7 +13,7 @@ import torch
 import kernelgenbench
 from sandbox.verifier.test_parametrize import label, parametrize
 
-# baseline（参考实现）随 benchmark 代码部署在所有 agent
+# baseline（参考实现）随 benchmark 代码部署到评测环境
 if not hasattr(kernelgenbench, "baseline"):
     kernelgenbench.baseline = types.SimpleNamespace()
 
@@ -28,7 +28,7 @@ kernelgenbench.baseline.addmm = _baseline_addmm
 # ---- 4 个裸角色函数（无 @vcd.*）----
 def input_build(config):
     m, k, n, dtype = config
-    return {  # CPU 生成；框架/agent 负责搬设备
+    return {  # CPU 生成；运行框架负责搬运到目标设备
         "input": torch.randn(m, n, dtype=dtype),
         "mat1": torch.randn(m, k, dtype=dtype),
         "mat2": torch.randn(k, n, dtype=dtype),

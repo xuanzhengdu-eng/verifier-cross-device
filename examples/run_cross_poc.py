@@ -1,9 +1,8 @@
-"""loopback cross PoC 一键脚本：起 3 个 agent（假装 nvidia/amd/ascend）→ 跑 controller → 收尾。
+"""Loopback PoC：启动本地评测服务，运行 Controller 后清理进程。
 
 用法（自带 PYTHONPATH）：
     python examples/run_cross_poc.py
-所有 agent 其实跑在同一台机器（同一 GPU），只用 --backend 打标签模拟不同后端；
-不需要开端口给外网、不需要三台机器。
+评测服务运行在同一台机器，只通过 backend 标签验证调度与比较流程。
 """
 import os
 import subprocess
@@ -23,13 +22,13 @@ import requests  # noqa: E402
 import torch  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-AGENTS = [("nvidia", 9101), ("amd", 9102), ("ascend", 9103)]
+EVALUATORS = [("nvidia", 9101), ("amd", 9102), ("ascend", 9103)]
 
 env = dict(os.environ)
 env["PYTHONPATH"] = os.pathsep.join([REPO, KGB, env.get("PYTHONPATH", "")])
 
 
-def start_agent(backend, port):
+def start_evaluator(backend, port):
     return subprocess.Popen(
         [
             sys.executable, "-m", "agent.server",
@@ -58,13 +57,13 @@ def wait_health(port, timeout=60):
 def main():
     procs = []
     try:
-        for backend, port in AGENTS:
-            procs.append(start_agent(backend, port))
-        for backend, port in AGENTS:
+        for backend, port in EVALUATORS:
+            procs.append(start_evaluator(backend, port))
+        for backend, port in EVALUATORS:
             ok = wait_health(port)
-            print(f"agent {backend} :{port} -> {'ready' if ok else 'FAILED'}")
+            print(f"evaluator {backend} :{port} -> {'ready' if ok else 'FAILED'}")
             if not ok:
-                raise RuntimeError(f"agent {backend} 未就绪")
+                raise RuntimeError(f"evaluation service {backend} 未就绪")
 
         os.environ["VCD_MODE"] = "cross"
         import vcd

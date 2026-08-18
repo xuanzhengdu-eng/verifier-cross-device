@@ -61,7 +61,8 @@ def main():
     run.set_defaults(func=run_command)
 
     dataset = subparsers.add_parser(
-        "dataset-run", help="run kernels against manifest inputs and golden outputs in KS3"
+        "dataset-run",
+        help="run a reference kernel and target kernels against manifest inputs",
     )
     dataset.add_argument("--config", required=True)
     dataset.add_argument("--problem", required=True)
@@ -88,9 +89,12 @@ def dataset_command(args) -> int:
             encoding="utf-8",
         )
         print(f"report: {Path(args.report).resolve()}")
-    return 1 if any(
-        not result.get("passed") for row in rows for result in row["results"]
-    ) else 0
+    failed = any(
+        row["reference"].get("status") != "success"
+        or any(not result.get("passed") for result in row["results"])
+        for row in rows
+    )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

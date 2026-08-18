@@ -1,0 +1,9 @@
+{
+  "type": "ks3",
+  "scheme": "https",
+  "endpoint": "ks3.example.com",
+  "bucket": "kernel-verification",
+  "prefix": "datasets/v1",
+  "ak_env": "VCD_KS3_AK",
+  "sk_env": "VCD_KS3_SK"
+}

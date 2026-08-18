@@ -33,9 +33,10 @@ class ExecRequest(BaseModel):
     job_id: str = Field(min_length=1, max_length=128)
     problem_key: str = Field(min_length=1, max_length=200)
     op: str = Field(min_length=1, max_length=200)
-    role: Literal["ref", "res"]
+    role: Literal["ref", "res", "reference", "target"]
     input_format: Literal["vcd", "dataset", "op_verify"] = "vcd"
     input_key: str = Field(min_length=1, max_length=1024)
+    executor_id: str | None = Field(default=None, min_length=1, max_length=200)
     solution_code: str | None = None
     solution_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
@@ -66,7 +67,7 @@ def build_app(
 ) -> FastAPI:
     runtime_device = detect_device(device)
     execute_lock = threading.Lock()
-    app = FastAPI(title=f"vcd-evaluator[{backend}]", version="0.3.0")
+    app = FastAPI(title=f"vcd-evaluator[{backend}]", version=vcd.__version__)
 
     @app.get("/health")
     def health(authorization: str | None = Header(default=None)):
@@ -74,7 +75,7 @@ def build_app(
         return {
             "status": "ok",
             "service": "vcd-evaluator",
-            "version": "0.3.0",
+            "version": vcd.__version__,
             "device": device_info(backend, runtime_device),
             "registered_problems": sorted(vcd.REGISTRY),
         }
@@ -86,6 +87,7 @@ def build_app(
             job_id = _safe_component(req.job_id, "job_id")
             problem_key = _safe_component(req.problem_key, "problem_key")
             op = _safe_component(req.op, "op")
+            executor_id = _safe_component(req.executor_id or backend, "executor_id")
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -103,8 +105,9 @@ def build_app(
             except Exception as exc:
                 return _error("input_error", backend, op, exc)
 
+            registry_role = {"reference": "ref", "target": "res"}.get(req.role, req.role)
             solution_fn = None
-            if req.role == "res":
+            if req.input_format in {"dataset", "op_verify"} or registry_role == "res":
                 if not allow_solution_code:
                     return {
                         "status": "error",
@@ -117,7 +120,7 @@ def build_app(
                         "status": "error",
                         "backend": backend,
                         "op": op,
-                        "error": "res request is missing solution_code",
+                        "error": f"{req.role} request is missing solution_code",
                     }
                 code_bytes = req.solution_code.encode("utf-8")
                 if len(code_bytes) > max_solution_bytes:
@@ -149,14 +152,14 @@ def build_app(
 
             roles = vcd.REGISTRY.get(problem_key, {})
             role_fn = solution_fn if req.input_format in {"dataset", "op_verify"} else roles.get(
-                f"{req.role}_compute"
+                f"{registry_role}_compute"
             )
             if role_fn is None:
                 return {
                     "status": "error",
                     "backend": backend,
                     "op": op,
-                    "error": f"no {req.role}_compute role registered for {problem_key}",
+                    "error": f"no {registry_role}_compute role registered for {problem_key}",
                 }
 
             try:
@@ -168,7 +171,7 @@ def build_app(
                     iterations=iterations,
                 )
                 output_key = (
-                    f"jobs/{job_id}/{problem_key}/{req.role}/{backend}/output.safetensors"
+                    f"jobs/{job_id}/{problem_key}/{req.role}/{executor_id}/output.safetensors"
                 )
                 storage.put(output_key, serialize_output(out))
             except Exception as exc:
@@ -178,6 +181,7 @@ def build_app(
                 "status": "success",
                 "backend": backend,
                 "role": req.role,
+                "executor_id": executor_id,
                 "output_key": output_key,
                 "latency_ms": timing.p50_ms,
                 "timing": timing.as_dict(),
