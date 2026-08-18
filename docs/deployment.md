@@ -45,7 +45,7 @@ docker exec vcd-DEVICE-work python3 -m pip install -e /opt/op-verify --no-deps
 docker exec vcd-DEVICE-work python3 -m pip install -e /opt/verifier-cross-device --no-deps
 ```
 
-用 `docker exec -e` 或工作容器专用环境文件注入 `OP_VERIFY_KS3_AK`、`OP_VERIFY_KS3_SK`、`VCD_AGENT_TOKEN`。不得把值写进镜像层。
+使用 `deploy/agent_daemon.py` 从标准输入接收 `OP_VERIFY_KS3_AK`、`OP_VERIFY_KS3_SK`、`VCD_AGENT_TOKEN`。不要把值写进命令参数、配置文件或镜像层。启动器在容器内将 Agent 后台化，PID 和日志分别位于 `/run/vcd-agent.pid`、`/var/log/vcd-agent.log`。
 
 切换正式 Agent 前，停止之前由我们创建的宿主机 HTTP 测试监听：
 
@@ -57,7 +57,7 @@ systemctl stop cross-device-listener-9100.service
 
 ## 保存与下次使用
 
-完成一个阶段后保存并停止工作容器：
+完成一个阶段后，先在工作容器运行 `python3 /opt/verifier-cross-device/deploy/agent_daemon.py stop`，再保存并停止工作容器：
 
 ```bash
 python3 container_clone.py save \
@@ -73,4 +73,3 @@ python3 container_clone.py resume --work vcd-DEVICE-work
 ```
 
 容器文件系统在 stop/start 之间会保留；版本镜像用于回滚或重新创建工作容器。环境变量中的密钥不会被 commit 保存，需要每次启动 Agent 时重新注入。
-
