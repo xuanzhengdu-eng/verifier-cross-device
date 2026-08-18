@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from vcd.config import AgentSpec, load_run_config
+from vcd.config import AgentSpec, RunConfig, load_run_config
 from vcd.errors import ConfigError
 
 
@@ -45,6 +45,31 @@ class ConfigTests(unittest.TestCase):
                     os.environ.pop("VCD_TEST_TOKEN", None)
                 else:
                     os.environ["VCD_TEST_TOKEN"] = old
+
+    def test_resolves_reference_solution_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "reference.py").write_text(
+                "def add(x): return x\n", encoding="utf-8"
+            )
+            config = RunConfig.from_dict(
+                {
+                    "reference": {
+                        "backend": "cpu",
+                        "service": "http://127.0.0.1:1",
+                        "solution": "reference.py",
+                    },
+                    "targets": {
+                        "target": {
+                            "service": "http://127.0.0.1:2",
+                        }
+                    },
+                    "storage": {"type": "local", "root": "artifacts"},
+                },
+                root,
+            )
+
+            self.assertEqual(config.solution_path("reference"), root / "reference.py")
 
     def test_legacy_agent_key_remains_compatible(self):
         spec = AgentSpec.from_dict(

@@ -56,6 +56,10 @@ reference 与 target 使用同一个服务实现。二者区别仅由请求中�
 
 对象存储承载输入和执行输出，避免通过控制面传输大型 Tensor。存储接口抽象为 `put/get/exists/list`，当前实现包括 KS3 和本地文件系统。
 
+这里的四个方法是存储后端契约，不是算子评测阶段。算子测试采用独立的四角色契约：
+`input_build / compute_ref / compute_res / compare`。本地 pytest 使用 `LocalStorage`，
+正式跨机器任务使用 `KS3Storage`；二者共享 safetensors 数据协议。
+
 ## 3. 单 case 执行时序
 
 ```text

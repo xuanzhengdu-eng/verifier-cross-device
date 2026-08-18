@@ -113,6 +113,8 @@ vcd-controller dataset-run \
 ## 测试
 
 ```bash
+python3 -m pip install -e '.[test]'
+python3 -m pytest
 CUDA_VISIBLE_DEVICES='' python3 -m unittest discover -s tests -v
 CUDA_VISIBLE_DEVICES='' python3 examples/run_local_poc.py
 CUDA_VISIBLE_DEVICES='' python3 examples/run_cross_poc.py

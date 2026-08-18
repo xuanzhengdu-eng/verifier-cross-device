@@ -132,6 +132,26 @@ class AgentTests(unittest.TestCase):
             torch.tensor([5.0]),
         )
 
+    def test_four_role_reference_can_execute_submitted_source(self):
+        code = "def add_one(x):\n    return x + 10\n"
+        payload = self._payload("ref")
+        payload.update(
+            {
+                "solution_code": code,
+                "solution_sha256": hashlib.sha256(code.encode()).hexdigest(),
+            }
+        )
+
+        response = self.client.post(
+            "/execute", json=payload, headers=self.headers
+        ).json()
+
+        self.assertEqual(response["status"], "success")
+        torch.testing.assert_close(
+            deserialize_output(self.storage.get(response["output_key"])),
+            torch.tensor([12.0]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

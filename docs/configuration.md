@@ -2,7 +2,7 @@
 
 ## 1. 配置结构
 
-`dataset-run` 使用一个 JSON 文件描述 reference、targets、对象存储和 HTTP 参数。
+`dataset-run` 使用一个 JSON 文件描述 reference、targets、存储后端和 HTTP 参数。
 
 ```json
 {
@@ -85,9 +85,25 @@ vcd-controller dataset-run \
 
 未传 `--op` 时，默认使用 problem key 最后一个路径段。
 
+四角色 `vcd-controller run` 同样使用这些 solution 路径。若 `reference.solution` 已
+配置，Controller 会把 reference 源码发送给 Reference 评测服务；否则仅为兼容旧式
+预注册模块，使用评测服务中已注册的 `compute_ref`。
+
 ## 5. Storage
 
-`dataset-run` 当前要求 `storage.type` 为 `ks3`。对象存储中至少需要：
+正式跨机器评测使用 `storage.type: "ks3"`。本地开发和 pytest 可以使用
+`storage.type: "local"`，两者都实现 `put/get/exists/list` 接口并使用相同的数据格式：
+
+```json
+{
+  "storage": {
+    "type": "local",
+    "root": "./artifacts"
+  }
+}
+```
+
+存储中至少需要：
 
 - `manifest.json`；
 - manifest 为每个 case 声明或约定的 `inputs.safetensors`。

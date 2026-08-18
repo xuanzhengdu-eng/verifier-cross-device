@@ -165,6 +165,30 @@ class DatasetRunTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 DatasetConfig.load(path)
 
+    def test_local_storage_is_supported_for_dataset_development(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self._config(root)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["storage"] = {"type": "local", "root": "artifacts"}
+            path.write_text(json.dumps(raw), encoding="utf-8")
+
+            config = DatasetConfig.load(path)
+
+            self.assertEqual(config.storage["type"], "local")
+            self.assertEqual(config.storage["root"], "artifacts")
+
+    def test_unknown_dataset_storage_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self._config(root)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["storage"] = {"type": "unknown"}
+            path.write_text(json.dumps(raw), encoding="utf-8")
+
+            with self.assertRaisesRegex(ConfigError, "local or ks3"):
+                DatasetConfig.load(path)
+
 
 if __name__ == "__main__":
     unittest.main()

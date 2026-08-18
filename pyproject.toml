@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verifier-cross-device"
-version = "0.4.0"
+version = "0.5.0"
 description = "Self-contained controller and evaluation services for cross-device kernel verification"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,9 @@ dependencies = [
     "uvicorn>=0.20",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.scripts]
 vcd-agent = "agent.server:main"
 vcd-evaluator = "agent.server:main"
@@ -24,4 +27,7 @@ vcd-evaluator-daemon = "deploy.agent_daemon:main"
 vcd-controller = "vcd.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["agent*", "deploy*", "storage*", "vcd*"]
+include = ["agent*", "deploy*", "examples*", "storage*", "vcd*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "examples/kernels"]

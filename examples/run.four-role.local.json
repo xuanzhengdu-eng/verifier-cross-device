@@ -1,0 +1,25 @@
+{
+  "problem_key": "activation_norm/relu2",
+  "op": "relu2",
+  "reference": {
+    "backend": "cpu-reference",
+    "service": "http://127.0.0.1:9201",
+    "solution": "kernels/activation_norm/relu2/reference.py"
+  },
+  "targets": {
+    "cpu-target": {
+      "backend": "cpu-target",
+      "service": "http://127.0.0.1:9202",
+      "solution": "kernels/activation_norm/relu2/reference.py"
+    }
+  },
+  "storage": {
+    "type": "local",
+    "root": "_vcd_store"
+  },
+  "http": {
+    "connect_timeout": 2,
+    "read_timeout": 60,
+    "retries": 1
+  }
+}

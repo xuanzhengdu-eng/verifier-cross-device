@@ -124,10 +124,11 @@ class RunConfig:
     def operation(self, problem_key: str) -> str:
         return self.op or problem_key.rsplit("/", 1)[-1]
 
-    def solution_path(self, target_name: str) -> Path:
-        spec = self.targets[target_name]
+    def solution_path(self, name: str) -> Path:
+        spec = self.reference if name == "reference" else self.targets[name]
         if not spec.solution:
-            raise ConfigError(f"targets.{target_name}.solution is required")
+            where = "reference" if name == "reference" else f"targets.{name}"
+            raise ConfigError(f"{where}.solution is required")
         path = Path(spec.solution)
         if not path.is_absolute():
             path = self.base_dir / path

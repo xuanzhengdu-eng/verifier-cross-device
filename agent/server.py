@@ -107,20 +107,16 @@ def build_app(
 
             registry_role = {"reference": "ref", "target": "res"}.get(req.role, req.role)
             solution_fn = None
-            if req.input_format in {"dataset", "op_verify"} or registry_role == "res":
+            solution_required = (
+                req.input_format in {"dataset", "op_verify"} or registry_role == "res"
+            )
+            if req.solution_code:
                 if not allow_solution_code:
                     return {
                         "status": "error",
                         "backend": backend,
                         "op": op,
                         "error": "solution source execution is disabled on this service",
-                    }
-                if not req.solution_code:
-                    return {
-                        "status": "error",
-                        "backend": backend,
-                        "op": op,
-                        "error": f"{req.role} request is missing solution_code",
                     }
                 code_bytes = req.solution_code.encode("utf-8")
                 if len(code_bytes) > max_solution_bytes:
@@ -149,11 +145,16 @@ def build_app(
                         }
                 except Exception as exc:
                     return _error("solution_error", backend, op, exc)
+            elif solution_required:
+                return {
+                    "status": "error",
+                    "backend": backend,
+                    "op": op,
+                    "error": f"{req.role} request is missing solution_code",
+                }
 
             roles = vcd.REGISTRY.get(problem_key, {})
-            role_fn = solution_fn if req.input_format in {"dataset", "op_verify"} else roles.get(
-                f"{registry_role}_compute"
-            )
+            role_fn = solution_fn or roles.get(f"{registry_role}_compute")
             if role_fn is None:
                 return {
                     "status": "error",
@@ -208,6 +209,9 @@ def _install_solution(op: str, code: str):
     fn = namespace.get(op)
     if not callable(fn):
         return None
+    from vcd.solution import install_solution
+
+    install_solution(op, fn)
     try:
         kernelgenbench = importlib.import_module("kernelgenbench")
     except ImportError:

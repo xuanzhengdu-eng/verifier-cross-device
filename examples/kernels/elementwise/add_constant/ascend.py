@@ -2,5 +2,8 @@ import flag_gems
 import torch_npu  # noqa: F401 - registers the Ascend runtime with PyTorch
 
 
-def reference(src, constant):
+def add_constant(src, constant):
     return flag_gems.add(src, constant)
+
+
+reference = add_constant

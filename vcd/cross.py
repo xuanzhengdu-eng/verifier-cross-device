@@ -34,13 +34,22 @@ def upload_inputs(key: str, named: dict) -> str:
 
 
 def _payload(cfg: RunConfig, key: str, role: str) -> dict[str, Any]:
-    return {
+    payload = {
         "job_id": context.job_id(),
         "problem_key": key,
         "op": cfg.operation(key),
         "role": role,
         "input_key": context.input_key(),
     }
+    if role == "ref" and cfg.reference.solution:
+        code = cfg.solution_path("reference").read_text(encoding="utf-8")
+        payload.update(
+            {
+                "solution_code": code,
+                "solution_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+            }
+        )
+    return payload
 
 
 def dispatch_ref(key: str) -> dict:

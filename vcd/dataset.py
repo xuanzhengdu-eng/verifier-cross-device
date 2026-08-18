@@ -62,8 +62,17 @@ class DatasetConfig:
         if missing_solutions:
             raise ConfigError(f"target solution is required: {missing_solutions}")
         storage = raw.get("storage")
-        if not isinstance(storage, dict) or storage.get("type") != "ks3":
-            raise ConfigError("dataset mode requires a KS3 storage object")
+        if isinstance(storage, str):
+            storage = {"type": "local", "root": storage}
+        if not isinstance(storage, dict):
+            raise ConfigError("dataset storage must be a path string or an object")
+        storage_type = str(storage.get("type", "local")).lower()
+        if storage_type not in {"local", "ks3"}:
+            raise ConfigError(
+                f"dataset storage type must be local or ks3, got {storage_type!r}"
+            )
+        if storage_type == "local" and not storage.get("root"):
+            raise ConfigError("local dataset storage requires a non-empty root")
         return cls(
             reference=reference,
             targets=targets,
