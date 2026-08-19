@@ -29,45 +29,73 @@
 
 所有节点部署相同版本的代码。节点角色由 Controller 的任务配置和 evaluator 的 `--backend/--device` 启动参数决定，不需要维护不同的软件包。
 
-## 2. 当前华为节点实例
+## 2. 当前两台国产卡服务器的重建起点
 
-华为 `10.0.0.7` 当前部署可作为重建时的参数参考：
+2026 年 8 月 19 日已删除原有的两个 VCD 工作容器。厂商基础容器、基础快照和 `0.5.0` 工作镜像均保留，可从基础容器重新部署，也可以在需要回滚时从工作镜像恢复。
 
-| 项目 | 当前值 |
-| --- | --- |
-| 厂商基础容器 | `gosim_server` |
-| 基础快照镜像 | `vcd/huawei-base:20260818` |
-| 独立评测容器 | `vcd-huawei-work` |
-| 已保存工作镜像 | `vcd/huawei-work:0.5.0` |
-| 项目目录 | `/opt/verifier-cross-device` |
-| 后端与设备 | `ascend` / `npu:0` |
-| 网络 | `host` |
-| 服务地址 | `10.0.0.7:9100` |
+| 项目 | 华为 Ascend | 摩尔线程 MUSA |
+| --- | --- | --- |
+| 内网地址 | `10.0.0.7` | `10.121.38.9` |
+| 厂商基础容器 | `gosim_server` | `gosim_server` |
+| 厂商基础镜像 | `tianshu1/huawei:20260807` | `tianshu1/moer:20260717` |
+| 待创建工作容器 | `vcd-huawei-work` | `vcd-moer-work` |
+| 保留的旧基础快照 | `vcd/huawei-base:20260818` | `vcd/moer-base:20260818` |
+| 保留的回滚镜像 | `vcd/huawei-work:0.5.0` | `vcd/moer-work:0.5.0` |
+| 容器内项目路径 | `/opt/verifier-cross-device` | `/opt/verifier-cross-device` |
+| 后端与设备 | `ascend` / `npu:0` | `musa` / `musa:0` |
+| Docker 网络 | `host` | 默认 bridge |
+| 9100 暴露方式 | 直接监听宿主机 9100 | `-p 9100:9100` |
 
-`host` 网络下 `docker ps` 不显示 `9100:9100` 端口映射。容器服务直接监听宿主机的 `0.0.0.0:9100`，这是预期行为。
+华为使用 `host` 网络，所以 `docker ps` 不显示 `9100:9100`，容器服务直接监听宿主机 `0.0.0.0:9100`。摩尔线程使用 bridge 网络，工作容器创建后宿主机会出现 `docker-proxy` 监听 9100；只有容器内部 evaluator 启动后，该端口才真正提供 `/health` 和 `/execute`。
 
 ## 3. 部署前准备
 
-在目标服务器上准备本仓库，并确认 Docker、厂商驱动和基础容器可用：
+先在 Controller/发布机上固定正式分支，并生成不含工作区未跟踪文件的 Git bundle：
 
 ```bash
-export PROJECT_ROOT=/path/to/verifier-cross-device
-cd "$PROJECT_ROOT"
+export SOURCE_ROOT=/root/workspace/dxz-workspace/cross-device-kernel-verification/verifier-cross-device
+cd "$SOURCE_ROOT"
+git status --short
+git bundle create /tmp/verifier-cross-device.bundle \
+  feature/cross-device-verification-service
+git bundle verify /tmp/verifier-cross-device.bundle
+```
 
+通过组织批准的 SSH/SCP 通道，把 bundle 分别传到华为和摩尔线程宿主机的 `/tmp/verifier-cross-device.bundle`。这样不需要把 Gitee/GitHub token 留在服务器上。
+
+在每台目标服务器上准备同一路径的部署仓库：
+
+```bash
+install -d -m 755 /opt/vcd-deploy
+git clone /tmp/verifier-cross-device.bundle \
+  /opt/vcd-deploy/verifier-cross-device
+cd /opt/vcd-deploy/verifier-cross-device
+git checkout feature/cross-device-verification-service
+
+export PROJECT_ROOT=/opt/vcd-deploy/verifier-cross-device
 git status --short
 git rev-parse HEAD
+```
+
+如果目标服务器已经通过其他受控发布方式取得仓库，只需令 `PROJECT_ROOT` 指向该固定版本目录，不必重复 bundle 步骤。
+
+确认 Docker、厂商驱动和基础容器可用：
+
+```bash
+cd "$PROJECT_ROOT"
+
 docker inspect <base-container> >/dev/null
 ```
 
 发布时应记录固定 Git commit。NVIDIA Reference 和所有国产卡 evaluator 必须使用同一 commit。
 
-项目内的本地凭证目录为：
+Controller/发布机项目内的本地凭证目录为：
 
 ```text
 .secrets/ks3_credentials.json
 ```
 
-文件格式如下。当前工作目录的该文件已配置真实值；新服务器需要通过安全渠道复制，普通 `git clone` 不会得到该文件：
+文件格式如下。当前 Controller 工作目录的该文件已配置真实值；普通 `git clone` 和 Git bundle 都不会得到该文件：
 
 ```json
 {
@@ -94,24 +122,63 @@ chmod 600 "$PROJECT_ROOT/.secrets/service_token"
 
 如果 Controller 已有 token，应安全复制同一 token，而不是重新生成，否则 Controller 会收到 HTTP 401。
 
+直接登录目标服务器操作时，需要通过安全通道把 `ks3_credentials.json` 和 `service_token` 复制到目标服务器的 `$PROJECT_ROOT/.secrets/`，然后执行：
+
+```bash
+install -d -m 700 "$PROJECT_ROOT/.secrets"
+chmod 600 "$PROJECT_ROOT/.secrets/ks3_credentials.json"
+chmod 600 "$PROJECT_ROOT/.secrets/service_token"
+```
+
+不要把 `.secrets` 复制进 Docker 镜像。第 7 节只会读取宿主机文件，并通过标准输入把值注入 evaluator 进程。
+
 ## 4. 创建基础快照和独立评测容器
 
-设置本次部署参数。以华为节点为例：
+两个节点都先设置公共参数：
 
 ```bash
 export BASE_CONTAINER=gosim_server
-export WORK_CONTAINER=vcd-huawei-work
-export BASE_SNAPSHOT_IMAGE=vcd/huawei-base:20260818
 export HOST_PORT=9100
 export CONTAINER_PORT=9100
+export DEPLOY_TAG=20260819
 ```
 
-确认基础容器中的设备可用，但不要在其中安装或修改任何文件：
+在华为节点设置：
+
+```bash
+export WORK_CONTAINER=vcd-huawei-work
+export BASE_SNAPSHOT_IMAGE="vcd/huawei-base:${DEPLOY_TAG}"
+export BACKEND=ascend
+export DEVICE=npu:0
+```
+
+在摩尔线程节点设置：
+
+```bash
+export WORK_CONTAINER=vcd-moer-work
+export BASE_SNAPSHOT_IMAGE="vcd/moer-base:${DEPLOY_TAG}"
+export BACKEND=musa
+export DEVICE=musa:0
+```
+
+确认基础容器状态，但不要在其中安装或修改任何文件：
 
 ```bash
 docker inspect "$BASE_CONTAINER" --format \
   'status={{.State.Status}} image={{.Config.Image}} network={{.HostConfig.NetworkMode}}'
+```
+
+华为检查 NPU：
+
+```bash
 docker exec "$BASE_CONTAINER" npu-smi info
+```
+
+摩尔线程检查 MUSA：
+
+```bash
+docker exec "$BASE_CONTAINER" bash -c \
+  'python3 -c "import torch; import torch_musa; print(torch.musa.is_available()); print(torch.musa.get_device_name(0))"'
 ```
 
 创建快照和工作容器：
@@ -168,10 +235,10 @@ docker exec "$WORK_CONTAINER" \
 docker exec "$WORK_CONTAINER" vcd-evaluator --help >/dev/null
 docker exec "$WORK_CONTAINER" \
   python3 /opt/verifier-cross-device/deploy/probe_device.py \
-  --backend ascend --device npu:0
+  --backend "$BACKEND" --device "$DEVICE"
 ```
 
-其他设备只修改最后一条命令：
+各设备参数对应关系：
 
 | 设备 | `--backend` | `--device` |
 | --- | --- | --- |
@@ -215,8 +282,8 @@ jq -n \
   }' \
   | docker exec -i "$WORK_CONTAINER" \
       vcd-evaluator-daemon start -- \
-        --backend ascend \
-        --device npu:0 \
+        --backend "$BACKEND" \
+        --device "$DEVICE" \
         --host 0.0.0.0 \
         --port 9100 \
         --storage-config /etc/vcd/storage.json \
@@ -225,7 +292,7 @@ jq -n \
         --iterations 10
 ```
 
-在摩尔线程节点把 `ascend/npu:0` 改为 `musa/musa:0`；在 NVIDIA Reference 节点改为 `cuda/cuda:0`。其余参数保持一致。
+华为节点的 `BACKEND/DEVICE` 为 `ascend/npu:0`，摩尔线程为 `musa/musa:0`；NVIDIA Reference 节点为 `cuda/cuda:0`。其余参数保持一致。
 
 查看服务状态和日志：
 
@@ -260,6 +327,15 @@ curl --fail --show-error \
   -H "Authorization: Bearer $VCD_SERVICE_TOKEN" \
   "http://<evaluation-service-ip>:9100/health"
 ```
+
+当前 Controller 任务配置使用运维提供的访问入口，而不是把远端内网地址直接写入任务配置：
+
+| Target | evaluator 内部监听 | Controller 当前访问入口 |
+| --- | --- | --- |
+| 华为 | `10.0.0.7:9100` | `100.122.173.134:8002` |
+| 摩尔线程 | `10.121.38.9:9100` | `100.122.235.76:8002` |
+
+因此两台 evaluator 启动后，还应从 `10.0.9.5` 分别访问上述 `8002/health`。有 token 时应返回 `status: ok`；无 token 时应返回 401。502、404 或连接失败说明入口到 9100 的后端链路尚未工作，不能仅凭宿主机上出现 9100 监听就判定部署成功。
 
 `/health` 只验证 HTTP、鉴权和设备探测。KS3 读写能力必须再通过一个小型 dataset case 验证；只有 Reference 和 Target 都成功生成 `output_key`，才说明服务端口、设备执行和 KS3 链路全部正常。
 
