@@ -92,11 +92,15 @@ vcd-evaluator \
 
 ## 运行验证任务
 
-复制并修改 [任务配置模板](examples/run.ks3.cross-device.example.json)，配置一个 reference 和任意数量 targets：
+复制并修改 [任务配置模板](config/run.example.json)，配置一个 reference 和任意数量 targets：
+
+```bash
+cp config/run.example.json config/run.internal.json
+```
 
 ```bash
 vcd-controller dataset-run \
-  --config /etc/vcd/run.json \
+  --config config/run.internal.json \
   --problem activation_norm/relu2 \
   --case 0 \
   --op reference \

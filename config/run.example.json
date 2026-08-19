@@ -2,20 +2,20 @@
   "reference": {
     "backend": "cuda",
     "service": "http://nvidia-evaluator.example:9100",
-    "solution": "solutions/<problem>/reference.py",
+    "solution": "../examples/kernels/<category>/<problem>/reference.py",
     "token_env": "VCD_SERVICE_TOKEN"
   },
   "targets": {
     "moer": {
       "backend": "musa",
       "service": "http://moer-evaluator.example:9100",
-      "solution": "solutions/<problem>/moer.py",
+      "solution": "../examples/kernels/<category>/<problem>/musa.py",
       "token_env": "VCD_SERVICE_TOKEN"
     },
     "huawei": {
       "backend": "ascend",
       "service": "http://huawei-evaluator.example:9100",
-      "solution": "solutions/<problem>/huawei.py",
+      "solution": "../examples/kernels/<category>/<problem>/ascend.py",
       "token_env": "VCD_SERVICE_TOKEN"
     }
   },

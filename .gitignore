@@ -15,6 +15,9 @@ reports/
 # 本机部署凭证。目录可以位于项目内，但真实 AK/SK 和服务 token 不进入 Git。
 .secrets/
 
+# 从模板填写的当前环境任务配置；模板和无密钥 Storage 配置仍由 Git 跟踪。
+config/run.internal.json
+
 # 编辑器/系统
 .vscode/
 .idea/

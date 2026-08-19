@@ -10,12 +10,15 @@
 | `README.md` | 项目总入口，介绍系统目标、架构、安装方法、服务启动、任务运行和文档索引。 |
 | `agent/__init__.py` | 将 `agent` 声明为 Python 包。 |
 | `agent/server.py` | 通用评测服务；提供 `/health` 和 `/execute`，读取 Storage 输入、加载 solution、在指定设备执行和计时，并写回输出。 |
+| `config/README.md` | 说明 Controller 与 evaluator 配置模板的复制、填写、跟踪和凭证边界。 |
+| `config/run.example.json` | Controller 正式跨设备任务模板，包含 Reference、Targets、solution、KS3 和 HTTP 占位配置。 |
+| `config/storage.example.json` | evaluator 通用 KS3 Storage 占位模板，只声明凭证环境变量名。 |
+| `config/storage.internal.json` | 当前内部 KS3 的 endpoint、bucket、prefix 和凭证环境变量名称；不包含真实 AK/SK。 |
 | `deploy/__init__.py` | 将 `deploy` 声明为 Python 包，使部署工具可以作为模块和命令入口安装。 |
 | `deploy/agent_daemon.py` | 评测服务守护启动器；通过标准输入接收凭证，在后台启动或停止 evaluator，并维护 PID 与日志文件。 |
 | `deploy/container_clone.py` | 从基础容器创建隔离工作容器，复用设备和必要挂载，并支持把工作容器保存成镜像或恢复运行。 |
 | `deploy/probe_device.py` | 设备探测小工具；验证 PyTorch 能在指定设备创建、计算和同步 Tensor，并打印设备信息。 |
 | `deploy/secret_payload.py` | 在不依赖 jq 的国产卡宿主机上读取本地私密文件、校验权限，并通过标准输出生成 evaluator 所需的凭证 JSON。 |
-| `deploy/storage.ks3.internal.json` | 当前内部环境的 KS3 endpoint、bucket、prefix 和凭证环境变量名称；不包含真实 AK/SK。 |
 | `docs/configuration.md` | 正式说明任务配置中的 reference、targets、solution、Storage、HTTP 和报告字段。 |
 | `docs/deployment.md` | 正式说明 Controller 与评测节点的安装、容器隔离、服务启动、健康检查、升级和回滚。 |
 | `docs/design.md` | 描述系统设计目标、控制面与数据面、执行时序、正确性模型、性能模型和安全边界。 |
@@ -55,14 +58,12 @@
 | `examples/kgb_integration.py` | 旧 KGB PoC 集成层；从 KGB label 获取 problem key，再调用 `vcd.autowire` 装配四角色。 |
 | `examples/run.four-role.local.json` | 四角色 HTTP loopback 配置；用两个本地 CPU evaluator 和 `LocalStorage` 验证完整跨服务流程。 |
 | `examples/run.json` | 旧 `addmm` 跨服务 PoC 配置，定义本地 reference、两个 target 和本地共享存储。 |
-| `examples/run.ks3.cross-device.example.json` | 正式跨设备 KS3 任务配置模板，使用占位服务地址和 solution 路径，不包含真实凭证。 |
 | `examples/run.ks3.loopback.json` | KS3 dataset loopback 配置模板，用两个本地 CPU 服务检查 KS3 数据流程。 |
 | `examples/run_cross_poc.py` | 旧四角色 PoC 启动器；启动多个本地 evaluator 后运行 `addmm` 跨服务测试并清理进程。 |
 | `examples/run_local_poc.py` | 旧四角色单机 PoC 启动器；加载 solution 后在同一进程运行 `addmm` 的正确与错误示例。 |
 | `examples/solutions/addmm/amd.py` | `addmm` 的正确 PoC solution，用于演示通过结果。 |
 | `examples/solutions/addmm/ascend.py` | `addmm` 的故意错误 PoC solution，用于演示框架能够发现数值错误。 |
 | `examples/solutions/relu2/reference.py` | 早期 dataset loopback 使用的独立 `relu2` PyTorch solution。 |
-| `examples/storage.ks3.example.json` | 单个 evaluator 使用的 KS3 Storage 配置模板，只写环境变量名，不保存 AK/SK。 |
 | `examples/test_addmm.py` | 旧 KGB 风格四角色算子示例，包含 `input_build/compute_ref/compute_res/compare` 和参数组合。 |
 | `pyproject.toml` | Python 包元数据、运行依赖、测试可选依赖、命令行入口、打包范围和 pytest 收集范围。 |
 | `storage/__init__.py` | 汇总导出 Storage 接口、本地/KS3 后端、工厂函数及通用序列化函数。 |

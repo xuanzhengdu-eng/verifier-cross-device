@@ -251,14 +251,14 @@ docker exec "$WORK_CONTAINER" \
 仓库提供当前内部环境使用的非密钥配置：
 
 ```text
-deploy/storage.ks3.internal.json
+config/storage.internal.json
 ```
 
 把它安装到评测容器：
 
 ```bash
 docker exec "$WORK_CONTAINER" install -d -m 755 /etc/vcd
-docker cp "$PROJECT_ROOT/deploy/storage.ks3.internal.json" \
+docker cp "$PROJECT_ROOT/config/storage.internal.json" \
   "$WORK_CONTAINER":/etc/vcd/storage.json
 docker exec "$WORK_CONTAINER" chmod 600 /etc/vcd/storage.json
 ```
@@ -346,7 +346,7 @@ export VCD_KS3_SK="$(python3 "$PROJECT_ROOT/deploy/secret_payload.py" \
 export VCD_SERVICE_TOKEN="$(tr -d '\r\n' <"$PROJECT_ROOT/.secrets/service_token")"
 
 vcd-controller dataset-run \
-  --config /etc/vcd/run.json \
+  --config "$PROJECT_ROOT/config/run.internal.json" \
   --problem <problem-key> \
   --case <case-index> \
   --op <entry-function> \

@@ -3,6 +3,11 @@
 ## 1. 配置结构
 
 `dataset-run` 使用一个 JSON 文件描述 reference、targets、存储后端和 HTTP 参数。
+项目提供 `config/run.example.json` 模板。首次使用时复制并填写当前环境配置：
+
+```bash
+cp config/run.example.json config/run.internal.json
+```
 
 ```json
 {
@@ -78,7 +83,7 @@ CLI 的 `--op` 指定源码入口函数：
 
 ```bash
 vcd-controller dataset-run \
-  --config /etc/vcd/run.json \
+  --config config/run.internal.json \
   --problem group/problem \
   --op kernel_entry
 ```
