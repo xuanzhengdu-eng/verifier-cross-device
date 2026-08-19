@@ -1,0 +1,9 @@
+{
+  "type": "ks3",
+  "scheme": "https",
+  "endpoint": "ks3-cn-beijing.ksyuncs.com",
+  "bucket": "baai-sailing",
+  "prefix": "op-verify/v2",
+  "ak_env": "VCD_KS3_AK",
+  "sk_env": "VCD_KS3_SK"
+}

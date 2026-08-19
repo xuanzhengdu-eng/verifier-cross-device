@@ -12,6 +12,9 @@ examples/_vcd_store/
 reports/
 .vcd-cache/
 
+# 本机部署凭证。目录可以位于项目内，但真实 AK/SK 和服务 token 不进入 Git。
+.secrets/
+
 # 编辑器/系统
 .vscode/
 .idea/

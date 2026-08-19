@@ -6,7 +6,7 @@
 
 | 文件 | 用途 |
 |---|---|
-| `.gitignore` | 定义 Git 不跟踪的构建产物、Python 缓存、本地报告和临时运行数据。 |
+| `.gitignore` | 定义 Git 不跟踪的构建产物、Python 缓存、本地报告、临时运行数据和 `.secrets/` 本地凭证目录。 |
 | `README.md` | 项目总入口，介绍系统目标、架构、安装方法、服务启动、任务运行和文档索引。 |
 | `agent/__init__.py` | 将 `agent` 声明为 Python 包。 |
 | `agent/server.py` | 通用评测服务；提供 `/health` 和 `/execute`，读取 Storage 输入、加载 solution、在指定设备执行和计时，并写回输出。 |
@@ -14,6 +14,7 @@
 | `deploy/agent_daemon.py` | 评测服务守护启动器；通过标准输入接收凭证，在后台启动或停止 evaluator，并维护 PID 与日志文件。 |
 | `deploy/container_clone.py` | 从基础容器创建隔离工作容器，复用设备和必要挂载，并支持把工作容器保存成镜像或恢复运行。 |
 | `deploy/probe_device.py` | 设备探测小工具；验证 PyTorch 能在指定设备创建、计算和同步 Tensor，并打印设备信息。 |
+| `deploy/storage.ks3.internal.json` | 当前内部环境的 KS3 endpoint、bucket、prefix 和凭证环境变量名称；不包含真实 AK/SK。 |
 | `docs/configuration.md` | 正式说明任务配置中的 reference、targets、solution、Storage、HTTP 和报告字段。 |
 | `docs/deployment.md` | 正式说明 Controller 与评测节点的安装、容器隔离、服务启动、健康检查、升级和回滚。 |
 | `docs/design.md` | 描述系统设计目标、控制面与数据面、执行时序、正确性模型、性能模型和安全边界。 |
