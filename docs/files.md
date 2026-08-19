@@ -14,6 +14,7 @@
 | `deploy/agent_daemon.py` | 评测服务守护启动器；通过标准输入接收凭证，在后台启动或停止 evaluator，并维护 PID 与日志文件。 |
 | `deploy/container_clone.py` | 从基础容器创建隔离工作容器，复用设备和必要挂载，并支持把工作容器保存成镜像或恢复运行。 |
 | `deploy/probe_device.py` | 设备探测小工具；验证 PyTorch 能在指定设备创建、计算和同步 Tensor，并打印设备信息。 |
+| `deploy/secret_payload.py` | 在不依赖 jq 的国产卡宿主机上读取本地私密文件、校验权限，并通过标准输出生成 evaluator 所需的凭证 JSON。 |
 | `deploy/storage.ks3.internal.json` | 当前内部环境的 KS3 endpoint、bucket、prefix 和凭证环境变量名称；不包含真实 AK/SK。 |
 | `docs/configuration.md` | 正式说明任务配置中的 reference、targets、solution、Storage、HTTP 和报告字段。 |
 | `docs/deployment.md` | 正式说明 Controller 与评测节点的安装、容器隔离、服务启动、健康检查、升级和回滚。 |
@@ -80,6 +81,7 @@
 | `tests/test_dataset_run.py` | 测试 manifest 驱动流程、运行时 Reference、Target 比较、加速比、失败语义和本地 Storage。 |
 | `tests/test_ks3_client.py` | 测试 KS3 URL、签名头、状态码处理和 marker 分页逻辑，不连接真实 KS3。 |
 | `tests/test_runtime.py` | 测试设备选择和同步计时结果的基本性质。 |
+| `tests/test_secret_payload.py` | 测试无 jq 凭证转换、单字段读取和私密文件权限校验。 |
 | `tests/test_storage.py` | 测试通用序列化往返、tuple/None 输出和 LocalStorage 路径安全。 |
 | `vcd/__init__.py` | VCD 包入口；声明版本并导出四角色装饰器、注册表、local/cross runner 和上下文。 |
 | `vcd/autowire.py` | 按函数名约定把 pytest 中的四个裸角色自动包装并注册，无需逐个写 VCD 装饰器。 |

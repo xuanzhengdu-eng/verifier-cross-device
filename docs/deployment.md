@@ -29,9 +29,9 @@
 
 所有节点部署相同版本的代码。节点角色由 Controller 的任务配置和 evaluator 的 `--backend/--device` 启动参数决定，不需要维护不同的软件包。
 
-## 2. 当前两台国产卡服务器的重建起点
+## 2. 部署评测服务
 
-2026 年 8 月 19 日已删除原有的两个 VCD 工作容器。厂商基础容器、基础快照和 `0.5.0` 工作镜像均保留，可从基础容器重新部署，也可以在需要回滚时从工作镜像恢复。
+从基础容器重新部署，也可以在需要回滚时从工作镜像恢复。
 
 | 项目 | 华为 Ascend | 摩尔线程 MUSA |
 | --- | --- | --- |
@@ -267,19 +267,14 @@ docker exec "$WORK_CONTAINER" chmod 600 /etc/vcd/storage.json
 
 ## 7. 注入凭证并启动 9100 服务
 
-评测服务从标准输入接收一次性 JSON，然后把凭证放入服务进程环境。下面命令不会把 AK/SK 写入命令行、Docker 配置或镜像层：
+评测服务从标准输入接收一次性 JSON，然后把凭证放入服务进程环境。国产卡宿主机不要求安装 `jq`；仓库内的 `deploy/secret_payload.py` 只依赖 Python 标准库，并兼容华为宿主机现有的 Python 3.7。下面命令不会把 AK/SK 写入命令行、Docker 配置或镜像层：
 
 ```bash
 cd "$PROJECT_ROOT"
 
-jq -n \
-  --slurpfile ks3 .secrets/ks3_credentials.json \
-  --rawfile token .secrets/service_token \
-  '{
-    VCD_KS3_AK: $ks3[0].ks3_ak,
-    VCD_KS3_SK: $ks3[0].ks3_sk,
-    VCD_SERVICE_TOKEN: ($token | gsub("[\\r\\n]+$"; ""))
-  }' \
+python3 deploy/secret_payload.py \
+  --credentials .secrets/ks3_credentials.json \
+  --service-token .secrets/service_token \
   | docker exec -i "$WORK_CONTAINER" \
       vcd-evaluator-daemon start -- \
         --backend "$BACKEND" \
@@ -344,8 +339,10 @@ curl --fail --show-error \
 Controller 使用同一份本地 KS3 凭证和 service token：
 
 ```bash
-export VCD_KS3_AK="$(jq -r '.ks3_ak' "$PROJECT_ROOT/.secrets/ks3_credentials.json")"
-export VCD_KS3_SK="$(jq -r '.ks3_sk' "$PROJECT_ROOT/.secrets/ks3_credentials.json")"
+export VCD_KS3_AK="$(python3 "$PROJECT_ROOT/deploy/secret_payload.py" \
+  --credentials "$PROJECT_ROOT/.secrets/ks3_credentials.json" --field ks3_ak)"
+export VCD_KS3_SK="$(python3 "$PROJECT_ROOT/deploy/secret_payload.py" \
+  --credentials "$PROJECT_ROOT/.secrets/ks3_credentials.json" --field ks3_sk)"
 export VCD_SERVICE_TOKEN="$(tr -d '\r\n' <"$PROJECT_ROOT/.secrets/service_token")"
 
 vcd-controller dataset-run \
